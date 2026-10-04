@@ -1,90 +1,58 @@
 # Weather Go by Lutarym
 
-Lovelace Custom Card for Home Assistant — shows whether current weather
-conditions are suitable for an outdoor activity today (or tomorrow,
-after 18:00). Fetches an hourly forecast directly from Open-Meteo (DWD
-model, no API key required) for the 06:00–18:00 window and rates rain
-probability/amount, wind speed, and temperature against
-activity-specific ideal ranges and tolerances. The card and its editor
-are fully bilingual (German/English), following `hass.language`
-automatically.
+Lovelace custom card for Home Assistant: is the weather right for your activity today?
 
-## Supported activities
+Each activity has its own animated scene, and the expected weather plays in it:
 
-| Activity | `activity` value | Wind rating |
-|---|---|---|
-| 🚲 Cycling | `bike` | less wind is better (maximum) |
-| 🏃 Running | `running` | less wind is better (maximum) |
-| 🚶 Walking | `walking` | less wind is better (maximum) |
-| 🚤 Boating | `boating` | less wind is better (maximum) |
-| ⛵ Sailing | `sailing` | **wind range** — some wind is desirable |
-| ⚽ Football | `football` | less wind is better (maximum) |
-| 🍖 Grilling | `bbq` | less wind is better (maximum) |
+| Activity | Scene |
+|---|---|
+| `bike` | Cyclist riding along a road, wheels and pedals turning |
+| `running` | Runner on a path |
+| `walking` | Walker on a path, with an umbrella when rain is expected |
+| `boating` | Motorboat on the water with a foam trail |
+| `sailing` | Sailboat heeling in the wind, sails filling |
+| `football` | Player shooting at a goal |
+| `bbq` | Grill with flames and smoke, lid shut when it is a no |
 
-Each activity comes with its own sensible default thresholds for rain,
-wind, and temperature (e.g. grilling wants it dry and warm; sailing
-wants a wind range instead of a simple maximum). All thresholds can be
-overridden individually in the editor or via YAML.
+Weather in the scene follows the forecast for 06:00 to 18:00 (today, or tomorrow after 18:00):
 
-## Installation via HACS
+- **Rain:** number of drops follows the amount, clouds follow the probability, splashes on the ground
+- **Snow:** falls instead of rain at or below freezing, ground and trees turn white
+- **Wind:** trees lean and sway, rain falls at an angle, clouds drift faster, gust lines, waves and white caps on the water
+- **Temperature:** warm horizon and a larger sun when hot, breath clouds and frost when cold
+- **Verdict:** the figure moves at full pace for "Yes", slower for "Maybe", and stops for "Better not"
 
-1. HACS → Frontend → **⋮** → Custom repositories
-2. Enter this repository's URL, category **Dashboard**
-3. Install "Weather Go by Lutarym"
-4. Reload Home Assistant (clear browser cache if needed)
+Below the scene the card shows the verdict and the values for rain, wind and temperature.
 
-## Manual installation
+Forecast: [Open-Meteo](https://open-meteo.com/) DWD ICON model, no API key required.
+The animation pauses while the card is out of view and respects the system setting for reduced motion.
 
-Copy `lutarym-weather-go-card.js` to `config/www/`:
+## Installation
 
-```yaml
-resources:
-  - url: /local/lutarym-weather-go-card.js
-    type: module
-```
+1. Copy `lutarym-weather-go-card.js` to `/config/www/`
+2. Settings > Dashboards > Resources > Add resource
+   - URL: `/local/lutarym-weather-go-card.js`
+   - Type: JavaScript Module
+3. Clear your browser cache (Ctrl+F5)
 
-## Usage
-
-Add via **Edit Dashboard → Add Card → "Weather Go by Lutarym"** — opens
-the visual configuration form directly, including an activity dropdown.
+## Configuration
 
 ```yaml
 type: custom:lutarym-weather-go-card
-activity: bike                    # bike | running | walking | boating | sailing | football | bbq
-lat: 52.52                        # optional, default: 52.52 (Berlin, placeholder)
-lon: 13.405                       # optional, default: 13.405 (Berlin, placeholder)
-title: My Title                    # optional, overrides the activity's default question
-rain_prob_ideal_max: 20            # optional, %  — overrides the activity preset
-rain_prob_tolerance: 10            # optional, %
-rain_amount_ideal_max: 0.5         # optional, mm
-rain_amount_tolerance: 0.5         # optional, mm
-wind_ideal_max: 20                 # optional, km/h — used when the activity's wind mode is "max"
-wind_ideal_min: 10                 # optional, km/h — used when the activity's wind mode is "range" (sailing)
-wind_tolerance: 5                  # optional, km/h
-temp_ideal_min: 15                 # optional, °C
-temp_ideal_max: 30                 # optional, °C
-temp_tolerance: 2                  # optional, °C
+activity: bike            # bike | running | walking | boating | sailing | football | bbq
+lat: 52.52                # optional
+lon: 13.405               # optional
+title: My Title           # optional, replaces the activity's question
 ```
 
-**Important:** set `lat`/`lon` to your own location — the defaults are
-just a generic placeholder (Berlin) and will give you Berlin's weather.
+Optional thresholds, each overrides the activity preset:
 
-## How the rating works
+| Key | Unit |
+|---|---|
+| `rain_prob_ideal_max`, `rain_prob_tolerance` | % |
+| `rain_amount_ideal_max`, `rain_amount_tolerance` | mm |
+| `wind_ideal_max`, `wind_tolerance` | km/h |
+| `wind_ideal_min` | km/h, only for sailing (wind range) |
+| `temp_ideal_min`, `temp_ideal_max`, `temp_tolerance` | °C |
 
-For each criterion (rain, wind, temperature), the hourly forecast values
-for the 06:00–18:00 window are checked against an ideal range and a
-tolerance band:
-
-- **OK (green)** — within the ideal range
-- **Maybe (yellow)** — outside the ideal range but within the tolerance
-- **Bad (red)** — outside both
-
-The overall verdict is the worst of the three individual ratings. For
-wind, activities with `windMode: "range"` (currently only sailing) are
-rated against the average wind speed over the window instead of the
-maximum, since a consistent moderate wind — not the absence of wind —
-is what's desired.
-
-## License
-
-Private / personal use.
+All options are also available in the visual editor. Languages: German and English.
