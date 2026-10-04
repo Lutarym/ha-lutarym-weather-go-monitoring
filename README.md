@@ -30,6 +30,8 @@ When the weather is not suitable, the figure stops and reacts to the reason:
 - **Too wet:** ducks, holds its hands over its head and steps on the spot
 - **Too little wind (sailing):** sails hang slack and flap
 
+The cyclist also has a little comedy for each reason: in a storm his helmet blows away and then he flies off with his bike, pushing it back in against the wind; in rain a car drives through the puddle and soaks him, so he shakes himself dry; in the cold an icicle grows on his nose until he sneezes it off; in the heat a puddle of sweat grows and he pours his bottle over his head. In good weather a bird rides along on his helmet for a while, and after the drink he pulls a wheelie.
+
 Reactions fade in and out smoothly. The cyclist gets off the saddle and puts a foot down. For "Maybe" the effects are lighter and the figure keeps moving.
 
 Below the scene the card shows the verdict and the values for rain, wind and temperature.

@@ -959,12 +959,17 @@ const UMBRELLA = `
 
 const FIGURES = {
   /* ---------------- Cycling ----------------
-   * A ride with changing scenes, about 40 seconds at full pace:
-   * cruising, a sprint out of the saddle, a climb (seated, then standing
-   * near the top), a fast descent tucked low without pedalling, a stop
-   * for a drink from the bottle and an easy restart. The road follows
-   * the hills, the rider's legs nearly straighten at the bottom of the
-   * pedal stroke and the feet follow the pedals (ankling).
+   * A ride with changing scenes, about 45 seconds at full pace:
+   * cruising (a bird lands on the helmet), a sprint out of the saddle
+   * (the bird flies off), a climb, a fast tucked descent, a stop for a
+   * drink, a wheelie and an easy ride on.
+   * When the weather says no, a little comedy plays instead:
+   *   storm  the helmet blows away, then rider and bike fly off; he
+   *          pushes the bike back in against the wind
+   *   rain   a car drives through the puddle and soaks him; he shakes
+   *          himself dry like a dog
+   *   cold   an icicle grows on his nose until he sneezes it off
+   *   heat   a puddle of sweat grows; he pours his bottle over his head
    */
   bike: {
     env: 'road',
@@ -975,7 +980,7 @@ const FIGURES = {
     shadow: [6, 60],
     PS: 1.25,
     PLAN: [
-      { len: 450, mode: 'seat', v: 1.0 },
+      { len: 650, mode: 'seat', v: 1.0, bird: true },
       { len: 520, mode: 'stand', v: 1.6 },
       { len: 320, mode: 'seat', v: 1.05 },
       { len: 820, mode: 'climb', v: 0.5, rise: 62 },
@@ -983,9 +988,13 @@ const FIGURES = {
       { len: 820, mode: 'coast', v: 1.85, rise: -62 },
       { len: 380, mode: 'seat', v: 0.95 },
       { len: 0, mode: 'pause', v: 0 },
-      { len: 480, mode: 'seat', v: 0.7 },
+      { len: 260, mode: 'seat', v: 0.8 },
+      { len: 330, mode: 'seat', v: 0.9, wheelie: true },
+      { len: 300, mode: 'seat', v: 0.85 },
     ],
     PAUSE: 8.4,
+    GAG: { wind: 17, rain: 11, cold: 10, hot: 11 },
+
     build() {
       const PS = this.PS;
       const bottle = (id) => `
@@ -994,6 +1003,8 @@ const FIGURES = {
           <rect x="-3.2" y="-3" width="6.4" height="4" fill="#E8EDF4" opacity="0.85"/>
           <rect x="-2" y="-10" width="4" height="3.4" rx="1" fill="#0B1017"/>
         </g>`;
+      const helmet = `<path d="M-8.2 -0.6 C-8.8 -8 -3 -11.6 2 -11 C7 -10.4 9.6 -7.2 9 -3.6 L11.4 -3 L8.6 -2 C3 -3.4 -3 -2.2 -8.2 -0.6 Z" fill="#FFC107"/>
+        <path d="M-5 -6 L-1 -9.6 M0 -5.4 L3.4 -9.6 M4.2 -5 L6.6 -8.2" stroke="#B88A00" stroke-width="0.9" stroke-linecap="round"/>`;
       const bike = `
         <path id="f-crank2" stroke="#7E8CA0" stroke-width="3" stroke-linecap="round"/>
         <circle id="f-ped2" r="2" fill="#55657F"/>
@@ -1001,25 +1012,62 @@ const FIGURES = {
         ${wheelSvg('f-spk-f', 38)}
         <path d="M-30 0 L0 4 L-8 -34 Z M-8 -34 L30 -31 M0 4 L33 -22 M30 -31 L33 -22 L38 0"
           fill="none" stroke="#FF7A1A" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+        <path id="frost-frame" d="M-30 0 L0 4 L-8 -34 Z M-8 -34 L30 -31 M0 4 L33 -22" fill="none" stroke="#E6F4FF" stroke-width="1.6" stroke-dasharray="2 3" opacity="0"/>
         <path d="M-30 0 L0 4" stroke="#55657F" stroke-width="1.4" transform="translate(0 2.5)"/>
         <path d="M-8 -34 L-9 -39 M30 -31 L32 -38 H37" fill="none" stroke="#A9B8C9" stroke-width="2.6" stroke-linecap="round"/>
         <path d="M37 -38 q6.5 0 5.5 6.5 q-0.8 4 -4.6 3.6" fill="none" stroke="#C3D0E0" stroke-width="2.6" stroke-linecap="round"/>
         <path d="M-17 -40.5 H-3" stroke="#0B1017" stroke-width="4" stroke-linecap="round"/>
         <path d="M10 -4 L20 -12 M12 -1 L22 -9" stroke="#55657F" stroke-width="1.2"/>
-        <g transform="translate(16 -8) rotate(52)" id="bottle-cage">${bottle('bottle-c')}</g>
+        <g transform="translate(16 -8) rotate(52)">${bottle('bottle-c')}</g>
         <circle cx="0" cy="4" r="6" fill="none" stroke="#7E8CA0" stroke-width="2"/>
         <path id="f-crank" stroke="#C3D0E0" stroke-width="3" stroke-linecap="round"/>
         <circle id="f-ped" r="2.2" fill="#A9B8C9"/>`;
+      const drops = Array.from({ length: 70 }, (_, i) => `<circle class="wdrop" id="wd${i}" r="1.3"/>`).join('');
+      const shards = Array.from({ length: 5 }, (_, i) => `<path class="shard" id="sh${i}" d="M0 -2 L1.4 1 L-1.2 1.4 Z"/>`).join('');
       return `
-        <g transform="scale(${PS})">
-          ${personSvg('b-', {
+        <ellipse id="puddle" cx="14" cy="21.5" rx="0" ry="3" fill="#7FA6D6" opacity="0.8"/>
+        <g id="b-fly">
+          <g id="b-shake">
+            <g transform="scale(${PS})">
+              ${personSvg('b-', {
     shirt: '#3D8BFF', pants: DARK, shoes: '#E8EDF4', hair: '#3A2A20',
-    hat: `<path d="M-8.2 -0.6 C-8.8 -8 -3 -11.6 2 -11 C7 -10.4 9.6 -7.2 9 -3.6 L11.4 -3 L8.6 -2 C3 -3.4 -3 -2.2 -8.2 -0.6 Z" fill="#FFC107"/>
-      <path d="M-5 -6 L-1 -9.6 M0 -5.4 L3.4 -9.6 M4.2 -5 L6.6 -8.2" stroke="#B88A00" stroke-width="0.9" stroke-linecap="round"/>
-      <path d="M3 -1.8 H8.6" stroke="#0B1017" stroke-width="2" stroke-linecap="round"/>`,
+    hat: `<path d="M-7.6 1 C-8.4 -6 -4 -9.8 1 -9.4 C5.6 -9.1 8 -6.4 7.7 -3.4 C5 -5.6 1.6 -5.4 -1.2 -4.4 C-2.6 -2.2 -3.4 1 -4.2 3.4 C-6 3.6 -7.4 2.8 -7.6 1 Z" fill="#3A2A20"/>
+      <g id="b-helmet">${helmet}</g>
+      <path d="M3 -1.8 H8.6" stroke="#0B1017" stroke-width="2" stroke-linecap="round"/>
+      <path id="b-icicle" d="M7.8 2 L10.4 2 L9.1 14.5 Z" fill="#DFF3FF" stroke="#A9D4F5" stroke-width="0.4" opacity="0"/>`,
     mid: `<g transform="scale(${(1 / PS).toFixed(4)})">${bike}</g>`,
     extra: `<g transform="scale(${(1 / PS).toFixed(4)})">${bottle('bottle-h')}</g>`,
   })}
+            </g>
+          </g>
+        </g>
+        <g id="helmet-fly" opacity="0"><g transform="scale(${PS})">${helmet}</g></g>
+        <path id="icicle-fly" d="M-1.3 0 L1.3 0 L0 12.5 Z" fill="#DFF3FF" opacity="0"/>
+        <g id="shards">${shards}</g>
+        <g id="bird" opacity="0">
+          <ellipse cx="0" cy="0" rx="5" ry="3.4" fill="#4A3426"/>
+          <circle cx="4.4" cy="-2.4" r="2.4" fill="#4A3426"/>
+          <path d="M6.6 -2.6 L9 -1.8 L6.6 -1.2 Z" fill="#FFB020"/>
+          <circle cx="5" cy="-3" r="0.6" fill="#F2F6FB"/>
+          <path d="M-4.6 -0.6 L-9 -2.6 L-8.4 1 Z" fill="#3A2A20"/>
+          <ellipse cx="1" cy="1.2" rx="3" ry="1.8" fill="#D9774A"/>
+          <path id="bird-w" d="M-2 -1 L2 -1 L-1 -8 Z" fill="#6B4A36"/>
+          <path id="bird-legs" d="M-1 3 V5.6 M1.6 3 V5.6" stroke="#FFB020" stroke-width="0.7"/>
+        </g>
+        <g id="car" transform="translate(900 0)">
+          <path d="M-46 14 V4 Q-44 -2 -34 -3 L-20 -16 Q-16 -19 -8 -19 H18 Q26 -19 32 -12 L40 -4 Q48 -3 48 4 V14 Z" fill="#2A62B8"/>
+          <path d="M-17 -13 L-10 -16.5 H2 V-5 H-24 Z M5 -16.5 H17 Q22 -16.5 27 -10 L31 -5 H5 Z" fill="#9CC3F0" opacity="0.8"/>
+          <path d="M-46 6 H48" stroke="#1C4A8A" stroke-width="1.4"/>
+          <rect x="43" y="-1" width="5" height="3" rx="1" fill="#FFE08A"/>
+          <g transform="translate(-28 14)"><circle r="8.5" fill="#0B1017"/><circle r="4" fill="#7E8CA0"/></g>
+          <g transform="translate(30 14)"><circle r="8.5" fill="#0B1017"/><circle r="4" fill="#7E8CA0"/></g>
+        </g>
+        <path id="wave" fill="#9CC3F0" opacity="0"/>
+        <g id="wdrops">${drops}</g>
+        <g id="sneeze" opacity="0">
+          <path d="M0 0 C-2 -16 6 -24 24 -24 C44 -24 52 -16 50 -6 C48 4 34 6 22 4 L12 10 L14 2 C6 0 1 -2 0 0 Z" fill="#F2F6FB"/>
+          <text id="sneeze-t" x="25" y="-6" text-anchor="middle" font-size="10" font-weight="700" fill="#0B1017"
+            font-family="Roboto, system-ui, sans-serif" style="paint-order: normal; stroke: none;">Hatschi!</text>
         </g>`;
     },
 
@@ -1043,6 +1091,11 @@ const FIGURES = {
       this.wheel = 0;
       this.stopW = 1;
       this.W = { seat: 1, stand: 0, climb: 0, coast: 0 };
+      this.gag = null;
+      this.gagT = 0;
+      this.wheelie = 0;
+      this.puddle = 0;
+      this.drops = null;
     },
 
     _seg(s) {
@@ -1093,6 +1146,20 @@ const FIGURES = {
       if (mode === 'climb' && f > 0.62) mode = 'stand';
       if (mode === 'coast' && f > 0.88) mode = 'seat';
 
+      // Comedy runs while he stands still because the weather says no.
+      const standing = this.vel < 10 && !pausing;
+      const reasonNow = standing ? moodReason(c.mood) : null;
+      if (reasonNow && this.GAG[reasonNow]) {
+        if (this.gag !== reasonNow) { this.gag = reasonNow; this.gagT = 0; }
+        this.gagT += c.dt;
+        if (this.gagT >= this.GAG[reasonNow]) this.gagT -= this.GAG[reasonNow];
+      } else {
+        this.gag = null;
+        this.gagT = 0;
+      }
+      const gag = this.gag;
+      const gt = this.gagT;
+
       // Wheels and cranks. Coasting holds the pedals level.
       this.wheel += (vB * c.dt) / 21;
       const cad = { seat: 0.55, climb: 0.9, stand: 0.62, coast: 0 }[mode];
@@ -1102,19 +1169,17 @@ const FIGURES = {
       } else {
         this.crank += ((vB * c.dt) / 21) * cad;
       }
-      el('f-spk-r').setAttribute('transform', `rotate(${deg(this.wheel).toFixed(1)})`);
-      el('f-spk-f').setAttribute('transform', `rotate(${deg(this.wheel).toFixed(1)})`);
 
-      // Posture weights fade between seated, climbing, standing and tucked.
       Object.keys(this.W).forEach((k) => {
         this.W[k] = lerp(this.W[k], k === mode ? 1 : 0, Math.min(1, c.dt * 2.2));
       });
-      // Foot down when stopped: for the drink or when the weather says no.
-      let stopT = this.vel < 10 && !pausing ? 1 : 0;
+      let stopT = standing ? 1 : 0;
       const pt8 = this.pauseT;
       if (pausing) stopT = pt8 < 1 ? ease(pt8) : pt8 > this.PAUSE - 1.3 ? 1 - ease((pt8 - (this.PAUSE - 1.3)) / 1.3) : 1;
       this.stopW = pausing ? stopT : lerp(this.stopW, stopT, Math.min(1, c.dt * 3));
-      const sw = this.stopW;
+      let sw = this.stopW;
+      // Storm: feet leave the road when the gust lifts him.
+      if (gag === 'wind' && gt > 4.6 && gt < 9.5) sw = Math.max(0, 1 - (gt - 4.6) / 0.5);
 
       const POSE = {
         seat: { hip: [-9, -43], ang: 52, hand: [39, -37], tilt: -16 },
@@ -1138,18 +1203,25 @@ const FIGURES = {
       let ang = mixP('ang');
       let hand = mixP('hand');
       let tilt = mixP('tilt');
-      // Out of the saddle the body rises and falls with each pedal stroke.
       const st = this.W.stand;
       hip = [hip[0] + Math.sin(this.crank * 2) * 1.4 * st, hip[1] - Math.abs(Math.sin(this.crank)) * 2.4 * st + Math.sin(this.crank * 2) * 0.5 * (1 - st) * Math.min(1, vB / 20)];
+
+      // Wheelie: leans back, front wheel up, a little wobble.
+      const wheelieOn = g.wheelie && !standing ? 1 : 0;
+      this.wheelie = lerp(this.wheelie, wheelieOn * (1 - Math.max(0, (f - 0.8) / 0.2)), Math.min(1, c.dt * 2.2));
+      hip = [hip[0] - 5 * this.wheelie, hip[1] - 1 * this.wheelie];
+      ang -= 22 * this.wheelie;
+      tilt -= 4 * this.wheelie;
+
       hip = lerpPt(hip, POSE.stop.hip, sw);
       ang = lerp(ang, POSE.stop.ang, sw);
       tilt = lerp(tilt, POSE.stop.tilt, sw);
       const a = (ang * Math.PI) / 180;
-      const shoulder = [hip[0] + Math.sin(a) * 30, hip[1] - Math.cos(a) * 30];
+      let shoulder = [hip[0] + Math.sin(a) * 30, hip[1] - Math.cos(a) * 30];
       const na = a * 0.55;
-      const head = [shoulder[0] + Math.sin(na) * 12.5 + 3.5, shoulder[1] - Math.cos(na) * 12.5];
+      let head = [shoulder[0] + Math.sin(na) * 12.5 + 3.5, shoulder[1] - Math.cos(na) * 12.5];
 
-      // Pedals and feet: the sole follows the pedal, toes dip at the bottom.
+      // Pedals and feet.
       const bb = [0, 4];
       const footOn = (cr) => {
         const pedal = polar(bb, 9, cr);
@@ -1159,13 +1231,198 @@ const FIGURES = {
       };
       const near = footOn(this.crank);
       const far = footOn(this.crank + Math.PI);
-      // Near foot steps down to the road when stopping, in a small arc.
       const ground = [16, 21 - 3.75];
       const lift = Math.sin(sw * Math.PI) * 6;
-      const ankleN = [lerp(near.ankle[0], ground[0], sw), lerp(near.ankle[1], ground[1], sw) - lift];
-      const faN = lerp(near.fa, 0, sw);
-      const kneeN = ik(hip, ankleN, LEG.thigh * PS, LEG.shin * PS, 1);
-      const kneeF = ik(hip, far.ankle, LEG.thigh * PS, LEG.shin * PS, 1);
+      let ankleN = [lerp(near.ankle[0], ground[0], sw), lerp(near.ankle[1], ground[1], sw) - lift];
+      let faN = lerp(near.fa, 0, sw);
+      let ankleF = far.ankle;
+      let faF = far.fa;
+
+      let handN = hand;
+      let handF = [hand[0] - 3, hand[1] - 1];
+      let headTilt = tilt;
+      let bottleIn = false;
+      let bottleRot = 52;
+      let mouthO = false;
+      let fly = null;          // [x, y, rotation] of the whole bike
+      let walkBeside = null;   // he pushes the bike back in
+      let helmetOn = true;
+      let helmetFly = null;    // [x, y, rot] in bike units
+      let shakeX = 0;
+
+      // ----- drink during the pause -----
+      if (pausing) {
+        const mo = rot([6.2 * PS, 4.6 * PS], -24);
+        const mouth = [head[0] + mo[0], head[1] + mo[1]];
+        const cap = rot([0, -10], -112);
+        const atMouth = [mouth[0] - cap[0], mouth[1] - cap[1]];
+        const CAGE = [16, -8];
+        handN = keyed([
+          [0, hand], [1.0, hand], [1.8, CAGE], [2.6, atMouth],
+          [4.8, atMouth], [5.5, [atMouth[0] + 3, atMouth[1] + 14]], [6.3, CAGE], [7.0, hand], [this.PAUSE, hand],
+        ], pt8, lerpPt);
+        bottleIn = pt8 >= 1.8 && pt8 < 6.3;
+        bottleRot = keyed([[1.8, 52], [2.4, 0], [2.8, -112], [4.8, -112], [5.3, 10], [6.3, 52]], pt8, lerp);
+        if (pt8 > 2.6 && pt8 < 4.8) headTilt = -24 + Math.sin(pt8 * 7) * 1.5;
+        else if (pt8 > 4.8 && pt8 < 5.6) headTilt = lerp(-24, 0, (pt8 - 4.8) / 0.8);
+      }
+
+      // ----- storm: helmet first, then the rider flies away -----
+      if (gag === 'wind') {
+        const gust = 0.5 + 0.5 * wobble(c.t * 1.1, 1);
+        if (gt < 2.6) {
+          headTilt = 8;
+        }
+        if (gt >= 2.6 && gt < 4.6) {
+          // Looks after his helmet, reaches back for it.
+          const k = ease(clamp((gt - 2.6) / 0.5, 0, 1));
+          headTilt = lerp(8, -18, k);
+          handN = lerpPt(hand, [head[0] - 22, head[1] - 6], k * 0.9);
+          mouthO = true;
+        }
+        if (gt >= 2.6 && gt < 4.8) {
+          const k = (gt - 2.6) / 2.2;
+          helmetFly = [head[0] - k * k * 330, head[1] - 12 - Math.sin(k * Math.PI) * 26 - k * 30, -k * 720];
+        }
+        if (gt >= 2.6) helmetOn = false;
+        if (gt >= 4.0 && gt < 4.6) fly = [-(gt - 4.0) * 12, 0, 0];   // rolls back
+        if (gt >= 4.6 && gt < 5.3) {
+          const k = ease((gt - 4.6) / 0.7);
+          fly = [-7.2 - k * 6, -k * 4, -k * 16];                       // front wheel lifts
+          mouthO = true;
+        }
+        if (gt >= 5.3 && gt < 7.4) {
+          const k = (gt - 5.3) / 2.1;
+          // Rises fast first, then tumbles away with the wind.
+          fly = [-13 - k * k * 400, -4 - 270 * (1 - (1 - k) * (1 - k)) + Math.sin(k * 9) * 5, -16 - k * k * 460];
+          mouthO = true;
+          // Arms and legs flail.
+          handN = [shoulder[0] + 4 + Math.sin(c.t * 14) * 6, shoulder[1] - 24 + Math.cos(c.t * 13) * 4];
+          handF = [shoulder[0] - 10 + Math.cos(c.t * 15) * 6, shoulder[1] - 22 + Math.sin(c.t * 12) * 4];
+        }
+        if (gt >= 7.4 && gt < 9.4) fly = [-900, 0, 0];               // gone
+        if (gt >= 9.4 && gt < 15.2) {
+          // Pushes the bike back in, bent into the wind, helmet on the bars.
+          const k = clamp((gt - 9.4) / 5.2, 0, 1);
+          fly = [lerp(-330, 0, k), 0, 0];
+          walkBeside = { lean: 14 + 6 * gust, moving: k < 1 };
+          helmetFly = [40, -27 + Math.sin(c.t * 4) * 1.5, 18 + Math.sin(c.t * 5) * 14];
+        }
+        if (gt >= 15.2) {
+          // Back on the bike, helmet back on.
+          const k = ease(clamp((gt - 15.2) / 1.2, 0, 1));
+          helmetOn = k > 0.75;
+          helmetFly = k < 0.75 ? lerpPt([40, -27], [head[0], head[1] - 10], k / 0.75).concat([lerp(18, 0, k)]) : null;
+          handN = lerpPt([40, -27], [head[0] + 2, head[1] - 6], Math.sin(Math.min(1, k) * Math.PI));
+        }
+      }
+
+      // ----- rain: a car drives through the puddle -----
+      let soaked = 0;
+      if (gag === 'rain') {
+        const carX = lerp(520, -520, clamp((gt - 2.6) / 1.4, 0, 1));
+        el('car').setAttribute('transform', `translate(${carX.toFixed(1)} 0) scale(1.55)`);
+        el('puddle').setAttribute('rx', '24');
+        if (gt >= 3.2 && !this.splashed) { this.splashed = true; this._splash(); }
+        if (gt < 3.0) this.splashed = false;
+        soaked = gt > 3.3 ? 1 : 0;
+        if (gt > 3.3 && gt < 5.0) {
+          // Frozen in shock, arms out, mouth open.
+          const k = ease(clamp((gt - 3.3) / 0.3, 0, 1));
+          handN = lerpPt(hand, [shoulder[0] + 18, shoulder[1] + 6], k);
+          handF = lerpPt(handF, [shoulder[0] - 14, shoulder[1] + 8], k);
+          mouthO = true;
+          headTilt = -6;
+        }
+        if (gt >= 5.0 && gt < 7.0) {
+          // Shakes himself like a dog.
+          const k = Math.sin(((gt - 5.0) / 2.0) * Math.PI);
+          shakeX = Math.sin(c.t * 38) * 2.2 * k;
+          headTilt = Math.sin(c.t * 38) * 14 * k;
+          handN = [shoulder[0] + 16, shoulder[1] + 10 + Math.sin(c.t * 38) * 4];
+          handF = [shoulder[0] - 12, shoulder[1] + 12 - Math.sin(c.t * 38) * 4];
+          if (Math.random() < c.dt * 30) this._drip([head[0] + rnd(-12, 12), head[1] + rnd(-6, 30)], true);
+        }
+      } else {
+        el('car').setAttribute('transform', 'translate(900 0)');
+        if (gag !== 'hot') el('puddle').setAttribute('rx', '0');
+      }
+
+      // ----- cold: icicle on the nose, then a sneeze -----
+      let icicle = 0;
+      if (gag === 'cold') {
+        icicle = clamp(gt / 6, 0, 1);
+        if (gt >= 6.0 && gt < 7.6) {
+          icicle = 0;
+          const k = gt - 6.0;
+          headTilt = k < 0.12 ? -14 : k < 0.35 ? lerp(22, 10, (k - 0.12) / 0.23) : lerp(10, 0, clamp((k - 0.35) / 1.2, 0, 1));
+          if (k < 0.12) mouthO = true;
+          if (!this.sneezed && k > 0.12) { this.sneezed = true; this.ice = { x: head[0] + 11, y: head[1] + 3, vx: 120, vy: -40, r: 0, broke: false }; }
+        }
+        if (gt < 6.0) this.sneezed = false;
+      }
+      el('b-icicle').setAttribute('opacity', icicle > 0.02 ? '0.95' : '0');
+      el('b-icicle').setAttribute('transform', `translate(9 2.2) scale(${(0.4 + 0.6 * icicle).toFixed(2)} ${icicle.toFixed(2)}) translate(-9 -2.2)`);
+      el('frost-frame').setAttribute('opacity', gag === 'cold' ? '0.8' : '0');
+      this._iceStep(el, c, gag === 'cold');
+      el('sneeze').setAttribute('opacity', gag === 'cold' && gt > 6.1 && gt < 7.5 ? '1' : '0');
+      el('sneeze').setAttribute('transform', `translate(${(head[0] + 16).toFixed(1)} ${(head[1] - 14).toFixed(1)})`);
+      el('sneeze-t').textContent = c.lang === 'de' ? 'Hatschi!' : 'Achoo!';
+
+      // ----- heat: sweat puddle, then water over the head -----
+      if (gag === 'hot') {
+        this.puddle = Math.min(30, this.puddle + c.dt * 3.2);
+        el('puddle').setAttribute('rx', this.puddle.toFixed(1));
+        const CAGE = [16, -8];
+        const above = [head[0] + 4, head[1] - 20];
+        if (gt >= 3.6 && gt < 8.6) {
+          handN = keyed([[3.6, hand], [4.3, CAGE], [5.1, above], [7.1, above], [7.9, CAGE], [8.6, hand]], gt, lerpPt);
+          bottleIn = gt >= 4.3 && gt < 7.9;
+          bottleRot = keyed([[4.3, 52], [5.0, 0], [5.4, 165], [6.9, 165], [7.3, 10], [7.9, 52]], gt, lerp);
+          if (gt > 5.4 && gt < 6.9) {
+            headTilt = -10;
+            for (let i = 0; i < 2; i += 1) if (Math.random() < c.dt * 40) this._pour(above);
+          }
+          if (gt > 6.9 && gt < 7.6) headTilt = Math.sin(c.t * 30) * 10;
+        }
+      } else {
+        this.puddle = Math.max(0, this.puddle - c.dt * 10);
+      }
+
+      // ----- good weather: a bird rides along on the helmet -----
+      this._bird(el, c, g, f, head, standing || gag !== null);
+
+      // ----- body -----
+      shoulder = [shoulder[0] + shakeX, shoulder[1]];
+      head = [head[0] + shakeX * 1.4, head[1]];
+      let hipD = hip;
+      let kneeN;
+      let kneeF;
+      if (walkBeside) {
+        // Standing next to the bike on the near side, walking.
+        const gw = GAITS.walk;
+        const vP = walkBeside.moving ? 64 / this.scale / PS : 0;
+        this.walkPh = (this.walkPh || 0) + (vP * c.dt) / strideOf(gw, 0.75);
+        const W = gaitPose(gw, this.walkPh, 0.75, walkBeside.moving ? 1 : 0, walkBeside.lean);
+        const off = [13, 21 / PS];
+        const m = (q) => [q[0] * PS + off[0] * PS, q[1] * PS + off[1] * PS];
+        hipD = m(W.hip);
+        shoulder = m(W.shoulder);
+        head = m(W.head);
+        ankleN = m(W.ankle); faN = W.footAng;
+        ankleF = m(W.ankle2); faF = W.footAng2;
+        kneeN = m(W.knee);
+        kneeF = m(W.knee2);
+        handN = [40, -36];
+        handF = [36, -37];
+        headTilt = 14;
+        this.wheel += (64 / this.scale) * c.dt / 21 * (walkBeside.moving ? 1 : 0);
+      } else {
+        kneeN = ik(hipD, ankleN, LEG.thigh * PS, LEG.shin * PS, 1);
+        kneeF = ik(hipD, ankleF, LEG.thigh * PS, LEG.shin * PS, 1);
+      }
+      el('f-spk-r').setAttribute('transform', `rotate(${deg(this.wheel).toFixed(1)})`);
+      el('f-spk-f').setAttribute('transform', `rotate(${deg(this.wheel).toFixed(1)})`);
       line(el, 'f-crank', bb, near.pedal);
       line(el, 'f-crank2', bb, far.pedal);
       el('f-ped').setAttribute('cx', near.pedal[0].toFixed(1));
@@ -1173,47 +1430,22 @@ const FIGURES = {
       el('f-ped2').setAttribute('cx', far.pedal[0].toFixed(1));
       el('f-ped2').setAttribute('cy', far.pedal[1].toFixed(1));
 
-      // Hands on the bars; during the stop the near hand drinks.
-      let handN = hand;
-      let headTilt = tilt;
-      let bottleIn = false;
-      let bottleRot = 52;
-      if (pausing) {
-        // Mouth with the head tilted back; the bottle's cap goes there.
-        const mo = rot([6.2 * PS, 4.6 * PS], -24);
-        const mouth = [head[0] + mo[0], head[1] + mo[1]];
-        const cap = rot([0, -10], -112);
-        const atMouth = [mouth[0] - cap[0], mouth[1] - cap[1]];
-        const CAGE = [16, -8];
-        const kp = [
-          [0, hand], [1.0, hand], [1.8, CAGE], [2.6, atMouth],
-          [4.8, atMouth], [5.5, [atMouth[0] + 3, atMouth[1] + 14]], [6.3, CAGE], [7.0, hand], [this.PAUSE, hand],
-        ];
-        handN = keyed(kp, pt8, lerpPt);
-        bottleIn = pt8 >= 1.8 && pt8 < 6.3;
-        bottleRot = keyed([[1.8, 52], [2.4, 0], [2.8, -112], [4.8, -112], [5.3, 10], [6.3, 52]], pt8, lerp);
-        if (pt8 > 2.6 && pt8 < 4.8) headTilt = -24 + Math.sin(pt8 * 7) * 1.5;   // head back, swallowing
-        else if (pt8 > 4.8 && pt8 < 5.6) headTilt = lerp(-24, 0, (pt8 - 4.8) / 0.8);
-      }
       el('bottle-c').style.opacity = bottleIn ? '0' : '1';
       el('bottle-h').style.opacity = bottleIn ? '1' : '0';
       el('bottle-h').setAttribute('transform', `translate(${pt(handN)}) rotate(${bottleRot.toFixed(1)})`);
 
       const elbowN = ik(shoulder, handN, 14 * PS, 13 * PS, -1);
-      const handF = [hand[0] - 3, hand[1] - 1];
       const elbowF = ik(shoulder, handF, 14 * PS, 13 * PS, -1);
-
-      // Everything above is in bike units; the person is drawn at 1/PS.
       const u = (q) => [q[0] / PS, q[1] / PS];
       const P = {
-        hip: u(hip), shoulder: u(shoulder), head: u(head), headTilt,
+        hip: u(hipD), shoulder: u(shoulder), head: u(head), headTilt,
         knee: u(kneeN), ankle: u(ankleN), footAng: faN, foot: u([ankleN[0], ankleN[1] + 3.75]),
-        knee2: u(kneeF), ankle2: u(far.ankle), footAng2: far.fa, foot2: u(far.pedal),
+        knee2: u(kneeF), ankle2: u(ankleF), footAng2: faF, foot2: u([ankleF[0], ankleF[1] + 3.75]),
         elbow: u(elbowN), hand: u(handN), elbow2: u(elbowF), hand2: u(handF),
       };
-      // Reactions to bad weather while standing: arms only, hands stay
-      // on the bars in the wind.
-      const { reason, w } = moodBlend(this, c, this.vel < 10 && !pausing);
+      // Gentle reactions for borderline weather and before the comedy starts.
+      const calm = !gag || (gag === 'wind' && gt < 2.6) || (gag === 'cold' && gt < 6) || (gag === 'hot' && gt < 3.6) || (gag === 'rain' && gt < 3.3) || (gag === 'rain' && gt >= 7);
+      const { reason, w } = moodBlend(this, c, standing && calm);
       if (reason && w > 0.001) {
         const hold = reason === 'wind';
         const R = reactionPose({ ...P, foot: [0, 0], foot2: [0, 0] }, reason, c.t, {
@@ -1227,7 +1459,144 @@ const FIGURES = {
       }
       setPerson(el, 'b-', P);
       cheeks(this.root, c);
-      this.head = [P.head[0] * PS, P.head[1] * PS];
+      el('b-helmet').setAttribute('opacity', helmetOn ? '1' : '0');
+      el('helmet-fly').setAttribute('opacity', helmetFly ? '1' : '0');
+      if (helmetFly) {
+        // On the handlebar it travels with the bike.
+        const hx = helmetFly[0] + (walkBeside && fly ? fly[0] : 0);
+        el('helmet-fly').setAttribute('transform', `translate(${hx.toFixed(1)} ${helmetFly[1].toFixed(1)}) rotate(${(helmetFly[2] || 0).toFixed(0)})`);
+      }
+      const mouth = el('b-mouth');
+      mouth.setAttribute('d', mouthO ? 'M5.4 3.4 a1.4 1.8 0 1 0 0.01 0 Z' : 'M5 4.6 Q6.2 4.9 7.2 4.3');
+      mouth.setAttribute('fill', mouthO ? '#5A2A20' : 'none');
+      // Wet jersey after the soaking.
+      this.wet = lerp(this.wet || 0, soaked, Math.min(1, c.dt * (soaked ? 6 : 0.25)));
+      el('b-torso').setAttribute('fill', mix('#3D8BFF', '#1F4C8F', this.wet));
+      if (this.wet > 0.2 && Math.random() < c.dt * 8 * this.wet) this._drip([rnd(-8, 16), rnd(-60, -30)], false);
+      this._dropsStep(el, c);
+
+      // Whole bike: wheelie, being blown away, pushed back in.
+      const wh = this.wheelie * (14 + Math.sin(c.t * 3.1) * 2.5);
+      const fx = fly || [0, 0, 0];
+      el('b-fly').setAttribute('transform', `translate(${fx[0].toFixed(1)} ${fx[1].toFixed(1)}) rotate(${(fx[2] - wh).toFixed(1)} -30 21)`);
+      if (el('fig-sh')) el('fig-sh').style.opacity = fly && (fx[1] < -2 || fx[0] < -20) ? '0' : '';
+      this.head = [head[0] + fx[0], head[1] + fx[1]];
+    },
+
+    /** Big splash from the car's wheel: a sheet of water and many drops. */
+    _splash() {
+      for (let i = 0; i < 58; i += 1) {
+        const d = this.drops && this.drops.find((q) => q.age >= 1);
+        if (!d) break;
+        d.age = 0; d.x = rnd(0, 34); d.y = 18; d.vx = rnd(-150, 10); d.vy = rnd(-300, -130); d.life = rnd(0.8, 1.3); d.r = rnd(1.2, 2.8);
+      }
+      this.waveT = 0;
+    },
+
+    _drip(p, fling) {
+      const d = this.drops && this.drops.find((q) => q.age >= 1);
+      if (!d) return;
+      d.age = 0; d.x = p[0]; d.y = p[1];
+      d.vx = fling ? rnd(-90, 90) : rnd(-4, 4); d.vy = fling ? rnd(-60, 0) : 0; d.life = 0.8; d.r = rnd(0.8, 1.4);
+    },
+
+    _pour(from) {
+      const d = this.drops && this.drops.find((q) => q.age >= 1);
+      if (!d) return;
+      d.age = 0; d.x = from[0] + 2.6 + rnd(-1.5, 1.5); d.y = from[1] + 10; d.vx = rnd(-12, 8); d.vy = rnd(10, 40); d.life = 0.9; d.r = rnd(0.9, 1.6);
+    },
+
+    _dropsStep(el, c) {
+      if (!this.drops) {
+        this.drops = Array.from({ length: 70 }, (_, i) => ({ el: el(`wd${i}`), age: 1 }));
+      }
+      this.drops.forEach((d) => {
+        if (d.age >= 1) { d.el.style.opacity = '0'; return; }
+        d.age += c.dt / d.life;
+        d.vy += 420 * c.dt;
+        d.x += d.vx * c.dt;
+        d.y += d.vy * c.dt;
+        if (d.y > 21) { d.y = 21; d.vy = 0; d.vx *= 0.3; }
+        d.el.setAttribute('cx', d.x.toFixed(1));
+        d.el.setAttribute('cy', d.y.toFixed(1));
+        d.el.setAttribute('r', d.r.toFixed(1));
+        d.el.style.opacity = (0.85 * (1 - d.age)).toFixed(2);
+      });
+      const wv = el('wave');
+      if (this.waveT !== undefined && this.waveT < 1) {
+        this.waveT += c.dt / 0.75;
+        const k = this.waveT;
+        const h = Math.sin(Math.min(1, k * 1.4) * Math.PI * 0.5) * 115 * (1 - k * 0.5);
+        wv.setAttribute('d', `M40 21 C${(36 - k * 10).toFixed(1)} ${(21 - h * 0.9).toFixed(1)} ${(4 - k * 40).toFixed(1)} ${(21 - h * 1.1).toFixed(1)} ${(-30 - k * 50).toFixed(1)} ${(21 - h * 0.55).toFixed(1)} C${(-14 - k * 30).toFixed(1)} ${(21 - h * 0.75).toFixed(1)} ${(8 - k * 10).toFixed(1)} ${(21 - h * 0.6).toFixed(1)} 4 21 Z`);
+        wv.setAttribute('opacity', (0.6 * (1 - k)).toFixed(2));
+      } else {
+        wv.setAttribute('opacity', '0');
+      }
+    },
+
+    /** Flying icicle after the sneeze; it breaks on the road. */
+    _iceStep(el, c, on) {
+      const fly = el('icicle-fly');
+      if (!this.ice || !on) {
+        fly.setAttribute('opacity', '0');
+        if (!on) this.ice = null;
+      } else if (!this.ice.broke) {
+        const k = this.ice;
+        k.vy += 420 * c.dt;
+        k.x += k.vx * c.dt;
+        k.y += k.vy * c.dt;
+        k.r += 600 * c.dt;
+        fly.setAttribute('opacity', '1');
+        fly.setAttribute('transform', `translate(${k.x.toFixed(1)} ${k.y.toFixed(1)}) rotate(${k.r.toFixed(0)}) scale(${this.PS})`);
+        if (k.y >= 20) {
+          k.broke = true;
+          k.shards = Array.from({ length: 5 }, (_, i) => ({ x: k.x, y: 20, vx: rnd(-50, 60), vy: rnd(-90, -30), r: rnd(0, 360), i }));
+          k.t = 0;
+        }
+      } else {
+        fly.setAttribute('opacity', '0');
+      }
+      for (let i = 0; i < 5; i += 1) {
+        const s = this.ice && this.ice.shards && this.ice.shards[i];
+        const sh = el(`sh${i}`);
+        if (!s || this.ice.t > 1.4) { sh.setAttribute('opacity', '0'); continue; }
+        s.vy += 380 * c.dt;
+        s.x += s.vx * c.dt;
+        s.y = Math.min(21, s.y + s.vy * c.dt);
+        if (s.y >= 21) { s.vx *= 0.85; s.vy = 0; }
+        s.r += s.vx * 3 * c.dt;
+        sh.setAttribute('opacity', (1 - this.ice.t / 1.4).toFixed(2));
+        sh.setAttribute('transform', `translate(${s.x.toFixed(1)} ${s.y.toFixed(1)}) rotate(${s.r.toFixed(0)}) scale(1.4)`);
+      }
+      if (this.ice && this.ice.broke) this.ice.t += c.dt;
+    },
+
+    /** Bird: flies in, rides on the helmet, flies off when he sprints. */
+    _bird(el, c, g, f, head, off) {
+      const bird = el('bird');
+      const top = [head[0] - 1, head[1] - 15];
+      let p = null;
+      let flap = true;
+      let flip = false;
+      if (!off && g.bird) {
+        if (f < 0.3) {
+          const k = ease(f / 0.3);
+          p = [lerp(top[0] + 260, top[0], k), lerp(top[1] - 120, top[1], k) - Math.sin(k * Math.PI) * 20];
+        } else {
+          p = top;
+          flap = false;
+        }
+      } else if (!off && this._seg(this.s).mode === 'stand' && this.s - this.segs[1].s0 < 260) {
+        const k = (this.s - this.segs[1].s0) / 260;
+        p = [top[0] - k * 160, top[1] - k * 130];
+        flip = true;
+      }
+      if (!p) { bird.setAttribute('opacity', '0'); return; }
+      bird.setAttribute('opacity', '1');
+      const hop = flap ? 0 : Math.max(0, Math.sin(c.t * 2.3)) > 0.97 ? -2 : 0;
+      bird.setAttribute('transform', `translate(${p[0].toFixed(1)} ${(p[1] + hop).toFixed(1)}) scale(${flip ? -1.2 : 1.2} 1.2)`);
+      el('bird-w').setAttribute('transform', flap ? `scale(1 ${Math.sin(c.t * 28).toFixed(2)})` : 'rotate(70) scale(0.6 0.5)');
+      el('bird-legs').setAttribute('opacity', flap ? '0' : '1');
     },
   },
 
@@ -2174,7 +2543,7 @@ class WeatherScene {
     const wind = clamp(L.wind || 0, 0, 80);
 
     this.figure.root = this.root;
-    this.figure.update($, { dist: this.dist, t, dt, pace: this.pace, look: L, v: vw, mood: this.mood });
+    this.figure.update($, { dist: this.dist, t, dt, pace: this.pace, look: L, v: vw, mood: this.mood, lang: this.lang || 'en' });
     const cam = this._terrain(w);
     this._moodFx(dt);
 
@@ -2643,6 +3012,7 @@ class LutarymWeatherGoCard extends HTMLElement {
     this._tile('temp', rating.temp, t(hass, 'pre_min'), fmt1(m.tempMin), '°C',
       `${t(hass, 'pre_max')} ${fmt1(m.tempMax)} °C`);
 
+    this._scene.lang = lutarymLang(hass);
     this._scene.setLook(weatherLook(m), PACE[overall], moodOf(res, c));
     if (prefersReducedMotion()) this._scene.still();
   }
@@ -2698,6 +3068,8 @@ class LutarymWeatherGoCard extends HTMLElement {
       .smoke { fill: #CBD5E1; opacity: 0; }
       .flame { fill: #FFB020; opacity: 0.92; }
       .spark { fill: #FFC44D; opacity: 0; }
+      .wdrop { fill: #9CC3F0; opacity: 0; }
+      .shard { fill: #DFF3FF; opacity: 0; }
       .flame:nth-child(even) { fill: #FF7A1A; }
       .cap { fill: none; stroke: #F2F6FB; stroke-width: 1.6; stroke-linecap: round; opacity: 0; }
       .crest { fill: none; stroke: #BFD8F0; stroke-width: 1.4; }
