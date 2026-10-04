@@ -6,9 +6,9 @@ Each activity has its own animated scene, and the expected weather plays in it:
 
 | Activity | Scene |
 |---|---|
-| `bike` | Cyclist riding along a road, wheels and pedals turning |
-| `running` | Runner on a path |
-| `walking` | Walker on a path, with an umbrella when rain is expected |
+| `bike` | A ride with changing scenes: cruising, a sprint out of the saddle, a climb, a fast tucked descent, a stop for a drink from the bottle and an easy restart; the road follows the hills |
+| `running` | Runner on a path, with a natural running stride and flight phase |
+| `walking` | Walker on a path with a natural gait, with an umbrella when rain is expected |
 | `boating` | Motorboat on the water with a foam trail |
 | `sailing` | Sailboat heeling in the wind, sails filling |
 | `football` | Player shooting at a goal |

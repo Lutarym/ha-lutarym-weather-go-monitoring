@@ -466,6 +466,161 @@ function keyed(keys, time, mixFn) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  Gait: walking and running from joint angle curves, as measured in
+ *  human gait analysis. Phase 0 is heel strike of the near leg.
+ *    hip   thigh angle from vertical, positive = forward
+ *    knee  knee flexion, 0 = straight
+ *    foot  sole angle, positive = toes down
+ *  The hip height follows from the foot on the ground, so the body rises
+ *  over the straight stance leg and dips when both feet touch. A planted
+ *  foot never slides: the stride sets the step rate.
+ * ------------------------------------------------------------------ */
+const LEG = { thigh: 21.5, shin: 21.5, ankle: 3, heel: 3, toe: 8.5, torso: 24 };
+const STAND_HIP = LEG.thigh + LEG.shin + LEG.ankle - 0.4;
+
+/** Smooth periodic interpolation through [phase, value] keys. */
+function curve(keys, p) {
+  const q = ((p % 1) + 1) % 1;
+  for (let i = 1; i < keys.length; i += 1) {
+    if (q <= keys[i][0]) {
+      const a = keys[i - 1];
+      const b = keys[i];
+      const f = (q - a[0]) / (b[0] - a[0] || 1);
+      return a[1] + (b[1] - a[1]) * (0.5 - 0.5 * Math.cos(f * Math.PI));
+    }
+  }
+  return keys[keys.length - 1][1];
+}
+
+const GAITS = {
+  walk: {
+    stance: 0.6,
+    hip: [[0, 22], [0.5, -10], [0.62, -8], [0.88, 25], [1, 22]],
+    knee: [[0, 3], [0.14, 16], [0.38, 3], [0.6, 38], [0.72, 62], [0.86, 28], [0.96, 2], [1, 3]],
+    foot: [[0, -14], [0.08, 0], [0.42, 0], [0.6, 26], [0.7, 14], [0.86, -2], [0.96, -12], [1, -14]],
+    bump: 0,
+    lean: 3,
+    hipMean: 7,
+    arm: { swing: 17, elbow: 12, extra: 12 },
+  },
+  run: {
+    stance: 0.36,
+    hip: [[0, 30], [0.34, -14], [0.44, -16], [0.7, 30], [0.86, 40], [1, 30]],
+    knee: [[0, 16], [0.12, 38], [0.32, 20], [0.45, 60], [0.62, 118], [0.78, 80], [0.92, 22], [1, 16]],
+    foot: [[0, -6], [0.07, 0], [0.24, 4], [0.38, 34], [0.58, 42], [0.78, 10], [0.93, -8], [1, -6]],
+    bump: 3.2,
+    lean: 9,
+    hipMean: 10,
+    arm: { swing: 34, elbow: 88, extra: 14 },
+  },
+};
+
+function rot(v, a) {
+  const r = (a * Math.PI) / 180;
+  return [v[0] * Math.cos(r) - v[1] * Math.sin(r), v[0] * Math.sin(r) + v[1] * Math.cos(r)];
+}
+
+/** One leg relative to the hip at (0, 0); amp scales the motion. */
+function legFK(g, p, amp) {
+  const th = curve(g.hip, p) * amp;
+  const kn = curve(g.knee, p) * (0.25 + 0.75 * amp);
+  const ft = curve(g.foot, p) * amp;
+  const t1 = (th * Math.PI) / 180;
+  const t2 = ((th - kn) * Math.PI) / 180;
+  const knee = [Math.sin(t1) * LEG.thigh, Math.cos(t1) * LEG.thigh];
+  const ankle = [knee[0] + Math.sin(t2) * LEG.shin, knee[1] + Math.cos(t2) * LEG.shin];
+  const h = rot([-LEG.heel, LEG.ankle], ft);
+  const tt = rot([LEG.toe, LEG.ankle], ft);
+  const heel = [ankle[0] + h[0], ankle[1] + h[1]];
+  const toe = [ankle[0] + tt[0], ankle[1] + tt[1]];
+  return { knee, ankle, foot: ft, low: Math.max(heel[1], toe[1]), heelX: heel[0] };
+}
+
+/** How far the body travels in one full cycle, from the planted foot. */
+function strideOf(g, amp) {
+  const a = legFK(g, 0, amp);
+  const b = legFK(g, g.stance, amp);
+  return Math.max(4, (a.ankle[0] - b.ankle[0]) / g.stance);
+}
+
+/**
+ * Pose for a phase. Returns hip height above the ground and both legs,
+ * relative to the hip. In flight (running) the hip follows an arc between
+ * take off and landing.
+ */
+function gaitFrame(g, p, amp) {
+  const L = [legFK(g, p, amp), legFK(g, p + 0.5, amp)];
+  const inStance = (q) => (((q % 1) + 1) % 1) < g.stance;
+  const stanceLow = [];
+  if (inStance(p)) stanceLow.push(L[0].low);
+  if (inStance(p + 0.5)) stanceLow.push(L[1].low);
+  let hipH;
+  if (stanceLow.length) {
+    hipH = Math.max(...stanceLow);
+  } else {
+    // Flight: from toe off of one leg to the landing of the other.
+    const qq = (((p % 0.5) + 0.5) % 0.5);
+    const f = clamp((qq - g.stance) / (0.5 - g.stance), 0, 1);
+    hipH = lerp(legFK(g, g.stance, amp).low, legFK(g, 0, amp).low, f) + Math.sin(f * Math.PI) * g.bump * amp;
+  }
+  return { hipH, legs: L };
+}
+
+/**
+ * Builds a full person pose (in figure units, ground at y = 0) from a gait
+ * phase. w blends between standing (0) and the gait (1).
+ */
+function gaitPose(g, p, amp, w, extraLean = 0) {
+  const stand = { hipH: STAND_HIP, legs: null };
+  const fr = gaitFrame(g, p, amp);
+  const hipH = lerp(stand.hipH, fr.hipH, w);
+  const hip = [0, -hipH];
+  const P = { hip };
+  const leg = (i, standX) => {
+    const l = fr.legs[i];
+    const sk = [standX * 0.4, LEG.thigh - 0.2];
+    const sa = [standX, LEG.thigh + LEG.shin - 0.4];
+    const knee = lerpPt(sk, l.knee, w);
+    const ankle = lerpPt(sa, l.ankle, w);
+    return { knee: [knee[0], knee[1] - hipH], ankle: [ankle[0], ankle[1] - hipH], foot: l.foot * w };
+  };
+  const a = leg(0, 3);
+  const b = leg(1, -3);
+  P.knee = a.knee; P.ankle = a.ankle; P.footAng = a.foot;
+  P.knee2 = b.knee; P.ankle2 = b.ankle; P.footAng2 = b.foot;
+  P.foot = [a.ankle[0], a.ankle[1] + LEG.ankle];
+  P.foot2 = [b.ankle[0], b.ankle[1] + LEG.ankle];
+
+  const lean = (g.lean * w + extraLean) * (Math.PI / 180);
+  // Torso pivots a little over the stance leg.
+  P.shoulder = [hip[0] + Math.sin(lean) * LEG.torso, hip[1] - Math.cos(lean) * LEG.torso];
+  P.head = [P.shoulder[0] + Math.sin(lean) * 10 + 3.2, P.shoulder[1] - Math.cos(lean) * 10.5];
+
+  // Arms swing against the legs; elbows bend more on the forward swing.
+  const arm = (q) => {
+    const fwd = (curve(g.hip, q + 0.5) - g.hipMean) / 30;   // swings with the opposite leg
+    const ang = g.arm.swing * fwd * amp * w;
+    const flex = lerp(10, g.arm.elbow, w) + Math.max(0, ang) * (g.arm.extra / 20);
+    const e = [P.shoulder[0] + Math.sin((ang * Math.PI) / 180) * 14, P.shoulder[1] + Math.cos((ang * Math.PI) / 180) * 14];
+    const fa = ((ang + flex) * Math.PI) / 180;
+    return [e, [e[0] + Math.sin(fa) * 13, e[1] + Math.cos(fa) * 13]];
+  };
+  [P.elbow, P.hand] = arm(p);
+  [P.elbow2, P.hand2] = arm(p + 0.5);
+  return P;
+}
+
+/** Standing pose with straight legs. */
+function standPose(lean = 0) {
+  return gaitPose(GAITS.walk, 0, 0.0001, 0, lean);
+}
+
+/** Knee for a person whose foot stands at a given point (ground contact). */
+function legTo(hip, foot) {
+  return ik(hip, [foot[0], foot[1] - LEG.ankle], LEG.thigh, LEG.shin, 1);
+}
+
+/* ------------------------------------------------------------------ *
  *  People, seen from the side and facing right.
  *  Limbs are tapered shapes, not lines: thighs wider at the hip, calves
  *  narrowing to the ankle, hands and shoes, a face in profile with nose,
@@ -538,6 +693,7 @@ function personSvg(p, o) {
       ${path('ua2', far(upper))}${path('la2', far(lower))}<circle id="${p}hd2" r="2.5" fill="${SKIN_FAR}"/>
       ${path('th2', far(o.pants))}${path('sh2', far(shin))}<path id="${p}fo2" d="${SHOE}" fill="${far(o.shoes)}"/>
     </g>
+    ${o.mid || ''}
     ${path('torso', o.shirt)}
     <path id="${p}hl" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="2.2" stroke-linecap="round"/>
     ${o.apron ? path('apron', o.apron) : ''}
@@ -568,20 +724,22 @@ function setPerson(el, p, P) {
   el(`${p}neck`).setAttribute('d', capsule(lerpPt(P.shoulder, P.head, 0.1), lerpPt(P.shoulder, P.head, 0.75), 2.7, 2.5));
   el(`${p}head`).setAttribute('transform', `translate(${pt(P.head)}) rotate(${(P.headTilt || 0).toFixed(1)})`);
 
-  const leg = (sfx, foot, knee) => {
-    const ankle = [foot[0], foot[1] - 3];
+  const leg = (sfx, foot, knee, ankleIn, angIn) => {
+    const ankle = ankleIn || [foot[0], foot[1] - 3];
     el(`${p}th${sfx}`).setAttribute('d', capsule(P.hip, knee, 5.6, 4));
     el(`${p}sh${sfx}`).setAttribute('d', capsule(knee, ankle, 3.9, 2.4));
     // Shoe: flat on the ground, heel rises behind the body, toe points
     // down while the foot swings.
-    const lift = -foot[1];
-    let ang = 0;
-    if (lift > 0.6) ang = clamp(deg(Math.atan2(ankle[1] - knee[1], ankle[0] - knee[0])) - 90, -30, 55) * 0.6 + lift * 1.6;
-    else if (foot[0] < P.hip[0] - 7) ang = -clamp((P.hip[0] - 7 - foot[0]) * 1.6, 0, 22);
-    el(`${p}fo${sfx}`).setAttribute('transform', `translate(${pt(foot)}) rotate(${ang.toFixed(1)})`);
+    let ang = angIn;
+    if (ang === undefined) {
+      const lift = -foot[1];
+      ang = 0;
+      if (lift > 0.6) ang = clamp(deg(Math.atan2(ankle[1] - knee[1], ankle[0] - knee[0])) - 90, -30, 55) * 0.6 + lift * 1.6;
+    }
+    el(`${p}fo${sfx}`).setAttribute('transform', `translate(${pt(ankle)}) rotate(${ang.toFixed(1)}) translate(0 3)`);
   };
-  leg('2', P.foot2, P.knee2);
-  leg('', P.foot, P.knee);
+  leg('2', P.foot2, P.knee2, P.ankle2, P.footAng2);
+  leg('', P.foot, P.knee, P.ankle, P.footAng);
 
   const arm = (sfx, elbow, hand) => {
     el(`${p}ua${sfx}`).setAttribute('d', capsule(P.shoulder, elbow, 3.4, 2.7));
@@ -593,32 +751,6 @@ function setPerson(el, p, P) {
   arm('', P.elbow, P.hand);
 }
 
-/** Running or walking cycle. Foot moves forward in the air, back on the ground. */
-function gaitPose(ph, o) {
-  // In the air the foot swings forward; running lifts the heel high behind.
-  const foot = (a) => {
-    const air = Math.max(0, Math.cos(a));
-    const kick = o.kick ? Math.max(0, Math.sin(a + 0.9)) * Math.max(0, Math.cos(a - 0.6)) * o.kick : 0;
-    return [o.stride * Math.sin(a) - kick * 0.6, -air * o.lift - kick];
-  };
-  const bob = o.bob(ph);
-  const hip = [0, -o.hipY + bob];
-  const shoulder = [o.lean, -o.hipY - 24 + bob];
-  const P = { hip, shoulder, head: [o.lean + 3.5, shoulder[1] - 11], foot: foot(ph), foot2: foot(ph + Math.PI) };
-  P.knee = ik(hip, P.foot, o.thigh, o.shin, 1);
-  P.knee2 = ik(hip, P.foot2, o.thigh, o.shin, 1);
-  const [ua, fa] = o.arm || [14, 13];
-  const arm = (a) => {
-    // Elbow bends more on the forward swing, the forearm lags behind.
-    const swing = o.armSwing * Math.sin(a);
-    const up = Math.PI / 2 + swing;
-    const elbow = polar(shoulder, ua, up);
-    return [elbow, polar(elbow, fa, up - o.elbowBend - Math.max(0, -swing) * 0.5)];
-  };
-  [P.elbow, P.hand] = arm(ph);
-  [P.elbow2, P.hand2] = arm(ph + Math.PI);
-  return P;
-}
 
 /* ------------------------------------------------------------------ *
  *  Reactions to unsuitable weather.
@@ -775,8 +907,13 @@ function blendPose(P, R, w, legs) {
   });
   P.headTilt = lerp(P.headTilt || 0, R.headTilt || 0, w);
   if (legs) {
-    P.knee = ik(P.hip, P.foot, legs[0], legs[1], 1);
-    P.knee2 = ik(P.hip, P.foot2, legs[0], legs[1], 1);
+    const ank = (f) => [f[0], f[1] - LEG.ankle];
+    P.ankle = P.ankle ? lerpPt(P.ankle, ank(R.foot), w) : ank(P.foot);
+    P.ankle2 = P.ankle2 ? lerpPt(P.ankle2, ank(R.foot2), w) : ank(P.foot2);
+    P.footAng = lerp(P.footAng || 0, 0, w);
+    P.footAng2 = lerp(P.footAng2 || 0, 0, w);
+    P.knee = ik(P.hip, P.ankle, LEG.thigh, LEG.shin, 1);
+    P.knee2 = ik(P.hip, P.ankle2, LEG.thigh, LEG.shin, 1);
   }
 }
 
@@ -821,7 +958,14 @@ const UMBRELLA = `
   </g>`;
 
 const FIGURES = {
-  /* ---------------- Cycling ---------------- */
+  /* ---------------- Cycling ----------------
+   * A ride with changing scenes, about 40 seconds at full pace:
+   * cruising, a sprint out of the saddle, a climb (seated, then standing
+   * near the top), a fast descent tucked low without pedalling, a stop
+   * for a drink from the bottle and an easy restart. The road follows
+   * the hills, the rider's legs nearly straighten at the bottom of the
+   * pedal stroke and the feet follow the pedals (ankling).
+   */
   bike: {
     env: 'road',
     anchor: [250, 211],
@@ -829,93 +973,261 @@ const FIGURES = {
     speed: 150,
     mouth: [37, -70],
     shadow: [6, 60],
+    PS: 1.25,
+    PLAN: [
+      { len: 450, mode: 'seat', v: 1.0 },
+      { len: 520, mode: 'stand', v: 1.6 },
+      { len: 320, mode: 'seat', v: 1.05 },
+      { len: 820, mode: 'climb', v: 0.5, rise: 62 },
+      { len: 200, mode: 'seat', v: 0.75 },
+      { len: 820, mode: 'coast', v: 1.85, rise: -62 },
+      { len: 380, mode: 'seat', v: 0.95 },
+      { len: 0, mode: 'pause', v: 0 },
+      { len: 480, mode: 'seat', v: 0.7 },
+    ],
+    PAUSE: 8.4,
     build() {
-      return `
-        <g id="f-far">
-          <path id="f-thigh2" stroke="${DARK_FAR}" stroke-width="9" stroke-linecap="round" fill="none"/>
-          <path id="f-shin2" stroke="${SKIN_FAR}" stroke-width="6" stroke-linecap="round" fill="none"/>
-          <path id="f-shoe2" stroke="#0B1017" stroke-width="4" stroke-linecap="round"/>
-          <path id="f-crank2" stroke="#7E8CA0" stroke-width="3" stroke-linecap="round"/>
-        </g>
+      const PS = this.PS;
+      const bottle = (id) => `
+        <g id="${id}">
+          <rect x="-3.2" y="-7" width="6.4" height="15" rx="2.2" fill="#22E07A"/>
+          <rect x="-3.2" y="-3" width="6.4" height="4" fill="#E8EDF4" opacity="0.85"/>
+          <rect x="-2" y="-10" width="4" height="3.4" rx="1" fill="#0B1017"/>
+        </g>`;
+      const bike = `
+        <path id="f-crank2" stroke="#7E8CA0" stroke-width="3" stroke-linecap="round"/>
+        <circle id="f-ped2" r="2" fill="#55657F"/>
         ${wheelSvg('f-spk-r', -30)}
         ${wheelSvg('f-spk-f', 38)}
         <path d="M-30 0 L0 4 L-8 -34 Z M-8 -34 L30 -31 M0 4 L33 -22 M30 -31 L33 -22 L38 0"
           fill="none" stroke="#FF7A1A" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M-30 0 L0 4" stroke="#55657F" stroke-width="1.4" transform="translate(0 2.5)"/>
         <path d="M-8 -34 L-9 -39 M30 -31 L32 -38 H37" fill="none" stroke="#A9B8C9" stroke-width="2.6" stroke-linecap="round"/>
         <path d="M37 -38 q6.5 0 5.5 6.5 q-0.8 4 -4.6 3.6" fill="none" stroke="#C3D0E0" stroke-width="2.6" stroke-linecap="round"/>
-        <path d="M-16 -40 H-3" stroke="#0B1017" stroke-width="4" stroke-linecap="round"/>
+        <path d="M-17 -40.5 H-3" stroke="#0B1017" stroke-width="4" stroke-linecap="round"/>
+        <path d="M10 -4 L20 -12 M12 -1 L22 -9" stroke="#55657F" stroke-width="1.2"/>
+        <g transform="translate(16 -8) rotate(52)" id="bottle-cage">${bottle('bottle-c')}</g>
         <circle cx="0" cy="4" r="6" fill="none" stroke="#7E8CA0" stroke-width="2"/>
-        <g id="f-body">
-          <path id="f-arm2" stroke="#2A62B8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-          <path d="M-9 -44 Q4 -62 20 -63" stroke="#3D8BFF" stroke-width="14" stroke-linecap="round" fill="none"/>
-          <path d="M-9 -44 Q4 -62 20 -63" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="3" stroke-linecap="round" fill="none" transform="translate(0 -4)"/>
-          <circle cx="29" cy="-71" r="7.5" fill="${SKIN}"/>
-          <circle id="f-cheek" cx="32" cy="-68" r="2.3" fill="#FF5F52" opacity="0"/>
-          <path d="M20.5 -72.5 a9 9 0 0 1 17.5 -2 l3 1.6 h-5 Z" fill="#FFC107"/>
-          <path d="M32 -74.5 h7" stroke="#0B1017" stroke-width="2" stroke-linecap="round"/>
-        </g>
         <path id="f-crank" stroke="#C3D0E0" stroke-width="3" stroke-linecap="round"/>
-        <path id="f-thigh" stroke="${DARK}" stroke-width="10" stroke-linecap="round" fill="none"/>
-        <path id="f-shin" stroke="${SKIN}" stroke-width="6.5" stroke-linecap="round" fill="none"/>
-        <path id="f-shoe" stroke="#E8EDF4" stroke-width="4.5" stroke-linecap="round"/>
-        <path id="f-arm" stroke="#3D8BFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <path id="f-fore" stroke="${SKIN}" stroke-width="5" stroke-linecap="round" fill="none"/>`;
+        <circle id="f-ped" r="2.2" fill="#A9B8C9"/>`;
+      return `
+        <g transform="scale(${PS})">
+          ${personSvg('b-', {
+    shirt: '#3D8BFF', pants: DARK, shoes: '#E8EDF4', hair: '#3A2A20',
+    hat: `<path d="M-8.2 -0.6 C-8.8 -8 -3 -11.6 2 -11 C7 -10.4 9.6 -7.2 9 -3.6 L11.4 -3 L8.6 -2 C3 -3.4 -3 -2.2 -8.2 -0.6 Z" fill="#FFC107"/>
+      <path d="M-5 -6 L-1 -9.6 M0 -5.4 L3.4 -9.6 M4.2 -5 L6.6 -8.2" stroke="#B88A00" stroke-width="0.9" stroke-linecap="round"/>
+      <path d="M3 -1.8 H8.6" stroke="#0B1017" stroke-width="2" stroke-linecap="round"/>`,
+    mid: `<g transform="scale(${(1 / PS).toFixed(4)})">${bike}</g>`,
+    extra: `<g transform="scale(${(1 / PS).toFixed(4)})">${bottle('bottle-h')}</g>`,
+  })}
+        </g>`;
     },
+
+    init() {
+      let s = 0;
+      let e = 0;
+      this.segs = this.PLAN.map((g) => {
+        const o = { ...g, s0: s, e0: e };
+        s += g.len;
+        e += g.rise || 0;
+        o.s1 = s;
+        return o;
+      });
+      this.L = s;
+      this.pausePos = this.segs.find((g) => g.mode === 'pause').s0;
+      this.s = 0;
+      this.vel = 0;
+      this.pauseT = -1;
+      this.pauseDone = false;
+      this.crank = 0;
+      this.wheel = 0;
+      this.stopW = 1;
+      this.W = { seat: 1, stand: 0, climb: 0, coast: 0 };
+    },
+
+    _seg(s) {
+      const q = wrap(s, 0, this.L);
+      return this.segs.find((g) => q >= g.s0 && q < g.s1) || this.segs[this.segs.length - 1];
+    },
+
+    /** Height of the road at a plan position, smooth over each slope. */
+    terrain(s) {
+      const q = wrap(s, 0, this.L);
+      const g = this._seg(q);
+      if (!g.rise) return g.e0;
+      return g.e0 + g.rise * ease(clamp((q - g.s0) / g.len, 0, 1));
+    },
+
+    /** Speed for this frame, with braking into the stop. */
+    plan(dt, pace) {
+      if (this.pauseT >= 0) {
+        this.pauseT += dt;
+        if (this.pauseT >= this.PAUSE || pace < 0.02) { this.pauseT = -1; this.pauseDone = true; }
+        this.vel = 0;
+        return 0;
+      }
+      const g = this._seg(this.s);
+      let vt = g.v * this.speed * pace;
+      if (g.mode === 'climb' && (this.s - g.s0) / g.len > 0.62) vt *= 0.9;
+      if (!this.pauseDone && pace > 0.02) {
+        const dp = this.pausePos - this.s;
+        if (dp >= 0 && dp < 450) {
+          vt = Math.min(vt, Math.sqrt(2 * 75 * dp));
+          if (dp < 1.5) { this.s = this.pausePos; this.vel = 0; this.pauseT = 0; return 0; }
+        }
+      }
+      const acc = vt > this.vel ? 55 : 120;
+      this.vel += clamp(vt - this.vel, -acc * dt, acc * dt);
+      this.s += this.vel * dt;
+      if (this.s >= this.L) { this.s -= this.L; this.pauseDone = false; }
+      return this.vel;
+    },
+
     update(el, c) {
-      const wheel = deg(c.dist / 21);
-      el('f-spk-r').setAttribute('transform', `rotate(${wheel.toFixed(1)})`);
-      el('f-spk-f').setAttribute('transform', `rotate(${wheel.toFixed(1)})`);
-      const crank = (c.dist / 21) * 0.55;
-      // When the bike stops the rider slides forward and puts a foot down.
-      const stop = 1 - Math.min(1, c.pace * 3);
-      const bob = Math.sin(crank * 2) * 0.7 * Math.min(1, c.pace * 2);
-      const { reason, w } = moodBlend(this, c, stop > 0.5);
-      const gust = 0.5 + 0.5 * wobble(c.t * 1.1, 1);
-      const lean = { wind: 4 + 5 * gust, rain: 5, cold: 3, hot: 2 }[reason] || 0;
-      // Shivering moves only the rider's upper body, never the bike.
-      const shiver = reason === 'cold' ? tremor(c.t) * 0.35 * w : 0;
-      const rotA = -12 * stop + lean * w;
-      const dx = 10 * stop + shiver;
-      const dy = 9 * stop + bob + (reason === 'cold' ? tremor(c.t, 2) * 0.25 * w : 0);
-      el('f-body').setAttribute('transform', `translate(${dx.toFixed(2)} ${dy.toFixed(2)}) rotate(${rotA.toFixed(2)} -9 -44)`);
-      const tp = (q) => { const r = rotAround(q, [-9, -44], rotA); return [r[0] + dx, r[1] + dy]; };
-      const hip = tp([-8, -43]);
-      const bb = [0, 4];
-      const leg = (a, thigh, shin, shoe, crankEl, ground) => {
-        const pedal = polar(bb, 10, a);
-        const foot = ground ? lerpPt(pedal, [9, 21], stop) : pedal;
-        const knee = ik(hip, foot, 26, 28, 1);
-        line(el, thigh, hip, knee);
-        line(el, shin, knee, foot);
-        line(el, shoe, [foot[0] - 2, foot[1]], [foot[0] + 6, foot[1] + 0.8]);
-        line(el, crankEl, bb, pedal);
+      const PS = this.PS;
+      const vB = this.vel / this.scale;
+      const pausing = this.pauseT >= 0;
+      const g = this._seg(this.s);
+      const f = g.len ? (wrap(this.s, 0, this.L) - g.s0) / g.len : 0;
+      let mode = g.mode === 'pause' ? 'seat' : g.mode;
+      if (mode === 'climb' && f > 0.62) mode = 'stand';
+      if (mode === 'coast' && f > 0.88) mode = 'seat';
+
+      // Wheels and cranks. Coasting holds the pedals level.
+      this.wheel += (vB * c.dt) / 21;
+      const cad = { seat: 0.55, climb: 0.9, stand: 0.62, coast: 0 }[mode];
+      if (mode === 'coast' || pausing || vB < 3) {
+        const target = Math.round(this.crank / Math.PI) * Math.PI;
+        this.crank += (target - this.crank) * Math.min(1, c.dt * 2.5);
+      } else {
+        this.crank += ((vB * c.dt) / 21) * cad;
+      }
+      el('f-spk-r').setAttribute('transform', `rotate(${deg(this.wheel).toFixed(1)})`);
+      el('f-spk-f').setAttribute('transform', `rotate(${deg(this.wheel).toFixed(1)})`);
+
+      // Posture weights fade between seated, climbing, standing and tucked.
+      Object.keys(this.W).forEach((k) => {
+        this.W[k] = lerp(this.W[k], k === mode ? 1 : 0, Math.min(1, c.dt * 2.2));
+      });
+      // Foot down when stopped: for the drink or when the weather says no.
+      let stopT = this.vel < 10 && !pausing ? 1 : 0;
+      const pt8 = this.pauseT;
+      if (pausing) stopT = pt8 < 1 ? ease(pt8) : pt8 > this.PAUSE - 1.3 ? 1 - ease((pt8 - (this.PAUSE - 1.3)) / 1.3) : 1;
+      this.stopW = pausing ? stopT : lerp(this.stopW, stopT, Math.min(1, c.dt * 3));
+      const sw = this.stopW;
+
+      const POSE = {
+        seat: { hip: [-9, -43], ang: 52, hand: [39, -37], tilt: -16 },
+        climb: { hip: [-8, -43.5], ang: 36, hand: [30, -36], tilt: -6 },
+        stand: { hip: [3, -52], ang: 48, hand: [40, -38], tilt: -12 },
+        coast: { hip: [-12, -42], ang: 70, hand: [41, -30.5], tilt: -36 },
+        stop: { hip: [3, -37], ang: 12, hand: [39, -37], tilt: 0 },
       };
-      leg(crank + Math.PI, 'f-thigh2', 'f-shin2', 'f-shoe2', 'f-crank2', false);
-      leg(crank, 'f-thigh', 'f-shin', 'f-shoe', 'f-crank', true);
-      const shoulder = tp([19, -62]);
-      const P = { hip, shoulder, head: tp([29, -71]) };
-      P.hand = [40, -36];
-      P.elbow = ik(shoulder, P.hand, 17, 17, -1);
-      const s2 = [shoulder[0] - 3, shoulder[1]];
-      P.hand2 = [37, -37];
-      P.elbow2 = ik(s2, P.hand2, 17, 17, -1);
-      // Reactions use the arms; head and torso stay in the body group.
+      const sum = Object.values(this.W).reduce((a, b) => a + b, 0) || 1;
+      const mixP = (key) => {
+        let x = 0;
+        let y = 0;
+        Object.keys(this.W).forEach((k) => {
+          const v = POSE[k][key];
+          const wgt = this.W[k] / sum;
+          if (Array.isArray(v)) { x += v[0] * wgt; y += v[1] * wgt; } else x += v * wgt;
+        });
+        return Array.isArray(POSE.seat[key]) ? [x, y] : x;
+      };
+      let hip = mixP('hip');
+      let ang = mixP('ang');
+      let hand = mixP('hand');
+      let tilt = mixP('tilt');
+      // Out of the saddle the body rises and falls with each pedal stroke.
+      const st = this.W.stand;
+      hip = [hip[0] + Math.sin(this.crank * 2) * 1.4 * st, hip[1] - Math.abs(Math.sin(this.crank)) * 2.4 * st + Math.sin(this.crank * 2) * 0.5 * (1 - st) * Math.min(1, vB / 20)];
+      hip = lerpPt(hip, POSE.stop.hip, sw);
+      ang = lerp(ang, POSE.stop.ang, sw);
+      tilt = lerp(tilt, POSE.stop.tilt, sw);
+      const a = (ang * Math.PI) / 180;
+      const shoulder = [hip[0] + Math.sin(a) * 30, hip[1] - Math.cos(a) * 30];
+      const na = a * 0.55;
+      const head = [shoulder[0] + Math.sin(na) * 12.5 + 3.5, shoulder[1] - Math.cos(na) * 12.5];
+
+      // Pedals and feet: the sole follows the pedal, toes dip at the bottom.
+      const bb = [0, 4];
+      const footOn = (cr) => {
+        const pedal = polar(bb, 9, cr);
+        const fa = 14 + 12 * Math.sin(cr);
+        const off = rot([6.9, 3.75], fa);
+        return { pedal, ankle: [pedal[0] - off[0], pedal[1] - off[1]], fa };
+      };
+      const near = footOn(this.crank);
+      const far = footOn(this.crank + Math.PI);
+      // Near foot steps down to the road when stopping, in a small arc.
+      const ground = [16, 21 - 3.75];
+      const lift = Math.sin(sw * Math.PI) * 6;
+      const ankleN = [lerp(near.ankle[0], ground[0], sw), lerp(near.ankle[1], ground[1], sw) - lift];
+      const faN = lerp(near.fa, 0, sw);
+      const kneeN = ik(hip, ankleN, LEG.thigh * PS, LEG.shin * PS, 1);
+      const kneeF = ik(hip, far.ankle, LEG.thigh * PS, LEG.shin * PS, 1);
+      line(el, 'f-crank', bb, near.pedal);
+      line(el, 'f-crank2', bb, far.pedal);
+      el('f-ped').setAttribute('cx', near.pedal[0].toFixed(1));
+      el('f-ped').setAttribute('cy', near.pedal[1].toFixed(1));
+      el('f-ped2').setAttribute('cx', far.pedal[0].toFixed(1));
+      el('f-ped2').setAttribute('cy', far.pedal[1].toFixed(1));
+
+      // Hands on the bars; during the stop the near hand drinks.
+      let handN = hand;
+      let headTilt = tilt;
+      let bottleIn = false;
+      let bottleRot = 52;
+      if (pausing) {
+        // Mouth with the head tilted back; the bottle's cap goes there.
+        const mo = rot([6.2 * PS, 4.6 * PS], -24);
+        const mouth = [head[0] + mo[0], head[1] + mo[1]];
+        const cap = rot([0, -10], -112);
+        const atMouth = [mouth[0] - cap[0], mouth[1] - cap[1]];
+        const CAGE = [16, -8];
+        const kp = [
+          [0, hand], [1.0, hand], [1.8, CAGE], [2.6, atMouth],
+          [4.8, atMouth], [5.5, [atMouth[0] + 3, atMouth[1] + 14]], [6.3, CAGE], [7.0, hand], [this.PAUSE, hand],
+        ];
+        handN = keyed(kp, pt8, lerpPt);
+        bottleIn = pt8 >= 1.8 && pt8 < 6.3;
+        bottleRot = keyed([[1.8, 52], [2.4, 0], [2.8, -112], [4.8, -112], [5.3, 10], [6.3, 52]], pt8, lerp);
+        if (pt8 > 2.6 && pt8 < 4.8) headTilt = -24 + Math.sin(pt8 * 7) * 1.5;   // head back, swallowing
+        else if (pt8 > 4.8 && pt8 < 5.6) headTilt = lerp(-24, 0, (pt8 - 4.8) / 0.8);
+      }
+      el('bottle-c').style.opacity = bottleIn ? '0' : '1';
+      el('bottle-h').style.opacity = bottleIn ? '1' : '0';
+      el('bottle-h').setAttribute('transform', `translate(${pt(handN)}) rotate(${bottleRot.toFixed(1)})`);
+
+      const elbowN = ik(shoulder, handN, 14 * PS, 13 * PS, -1);
+      const handF = [hand[0] - 3, hand[1] - 1];
+      const elbowF = ik(shoulder, handF, 14 * PS, 13 * PS, -1);
+
+      // Everything above is in bike units; the person is drawn at 1/PS.
+      const u = (q) => [q[0] / PS, q[1] / PS];
+      const P = {
+        hip: u(hip), shoulder: u(shoulder), head: u(head), headTilt,
+        knee: u(kneeN), ankle: u(ankleN), footAng: faN, foot: u([ankleN[0], ankleN[1] + 3.75]),
+        knee2: u(kneeF), ankle2: u(far.ankle), footAng2: far.fa, foot2: u(far.pedal),
+        elbow: u(elbowN), hand: u(handN), elbow2: u(elbowF), hand2: u(handF),
+      };
+      // Reactions to bad weather while standing: arms only, hands stay
+      // on the bars in the wind.
+      const { reason, w } = moodBlend(this, c, this.vel < 10 && !pausing);
       if (reason && w > 0.001) {
         const hold = reason === 'wind';
-        const R = reactionPose({ ...P, hip, foot: [0, 0], foot2: [0, 0] }, reason, c.t, {
-          arm: [17, 17], handsToMouth: true, keepNear: hold, keepFar: hold || reason === 'hot',
+        const R = reactionPose({ ...P, foot: [0, 0], foot2: [0, 0] }, reason, c.t, {
+          arm: [14, 13], handsToMouth: true, keepNear: hold, keepFar: hold || reason === 'hot',
         });
-        // The body group already leans, so only the arms are taken over.
-        ['elbow', 'hand', 'elbow2', 'hand2'].forEach((k) => {
-          const q = R.lean ? rotAround(R[k], hip, -R.lean) : R[k];
+        ['elbow', 'hand', 'elbow2', 'hand2', 'shoulder', 'head'].forEach((k) => {
+          const q = R.lean ? rotAround(R[k], P.hip, -R.lean) : R[k];
           P[k] = lerpPt(P[k], q, w);
         });
+        P.headTilt = lerp(P.headTilt, R.headTilt, w);
       }
-      line(el, 'f-arm', shoulder, P.elbow);
-      line(el, 'f-fore', P.elbow, P.hand);
-      el('f-arm2').setAttribute('d', `M${pt(s2)} L${pt(P.elbow2)} L${pt(P.hand2)}`);
-      el('f-cheek').setAttribute('opacity', (Math.max(c.mood.hot || 0, (c.mood.cold || 0) * 0.7) * 0.6).toFixed(2));
-      this.head = tp([29, -71]);
+      setPerson(el, 'b-', P);
+      cheeks(this.root, c);
+      this.head = [P.head[0] * PS, P.head[1] * PS];
     },
   },
 
@@ -934,13 +1246,13 @@ const FIGURES = {
       });
     },
     update(el, c) {
-      const ph = c.dist / 16;
-      const k = Math.min(1, c.pace * 1.6);
-      const P = gaitPose(ph, {
-        stride: 6 + 10 * k, lift: 3 + 7 * k, kick: 9 * k, hipY: 44, lean: 4 + 4 * k, thigh: 22, shin: 23,
-        bob: (a) => -Math.abs(Math.cos(a)) * 2.4 * k, armSwing: 0.25 + 0.6 * k, elbowBend: 1.25 + 0.4 * k,
-      });
-      personMood(this, P, c, { arm: [14, 13], legs: [22, 23], standing: true });
+      // Step rate follows the ground speed, so the planted foot never slides.
+      const g = GAITS.run;
+      const v = c.v / this.scale;
+      const amp = clamp(0.55 + v / 160, 0.6, 1.1);
+      this.ph = (this.ph || 0) + (v * c.dt) / strideOf(g, amp);
+      const P = gaitPose(g, this.ph, amp, clamp(v / 25, 0, 1));
+      personMood(this, P, c, { arm: [14, 13], legs: true, standing: true });
       setPerson(el, 'r-', P);
       cheeks(this.root, c);
       this.head = P.head;
@@ -952,7 +1264,7 @@ const FIGURES = {
     env: 'path',
     anchor: [255, 240],
     scale: 1.35,
-    speed: 48,
+    speed: 65,
     mouth: [11, -79],
     shadow: [0, 20],
     build() {
@@ -962,12 +1274,11 @@ const FIGURES = {
       });
     },
     update(el, c) {
-      const ph = c.dist / 12;
-      const k = Math.min(1, c.pace * 1.6);
-      const P = gaitPose(ph, {
-        stride: 3 + 9 * k, lift: 1 + 3.5 * k, hipY: 45, lean: 1.5, thigh: 22, shin: 23.5,
-        bob: (a) => -(1 - Math.abs(Math.sin(a))) * 1.4 * k, armSwing: 0.1 + 0.32 * k, elbowBend: 0.3,
-      });
+      const g = GAITS.walk;
+      const v = c.v / this.scale;
+      const amp = clamp(0.6 + v / 120, 0.6, 1.05);
+      this.ph = (this.ph || 0) + (v * c.dt) / strideOf(g, amp);
+      const P = gaitPose(g, this.ph, amp, clamp(v / 15, 0, 1));
       // With rain the near hand holds an umbrella, tilted into the wind.
       const umbrella = c.look.rain > 0;
       el('umb').setAttribute('opacity', umbrella ? '1' : '0');
@@ -981,7 +1292,7 @@ const FIGURES = {
         // Storm turns the umbrella inside out.
         el('umb-c').setAttribute('transform', storm ? `translate(0 ${(-60 + Math.sin(c.t * 13) * 1.5).toFixed(1)}) scale(1 -1)` : '');
       }
-      personMood(this, P, c, { arm: [14, 13], legs: [22, 23.5], standing: true, keepNear: umbrella, umbrella });
+      personMood(this, P, c, { arm: [14, 13], legs: true, standing: true, keepNear: umbrella, umbrella });
       setPerson(el, 'w-', P);
       cheeks(this.root, c);
       this.head = P.head;
@@ -1129,17 +1440,17 @@ const FIGURES = {
         [0, [5, 0]], [0.35, [-6, -3]], [0.55, [-18, -9]], [0.7, [12, -4]], [0.82, [22, -15]], [1.1, [5, 0]],
       ], tau, lerpPt);
       const lean = still ? 2 : keyed([[0, 3], [0.55, -2], [0.72, 7], [1.1, 3]], tau, lerp);
-      const hip = [0, -44];
-      const shoulder = [lean + 2, -68];
-      const P = { hip, shoulder, head: [lean + 5, -78.5], foot: kick, foot2: plant };
-      P.knee = ik(hip, P.foot, 22, 23, 1);
-      P.knee2 = ik(hip, P.foot2, 22, 23, 1);
+      const hip = [0, -STAND_HIP];
+      const shoulder = [lean + 2, -STAND_HIP - 24];
+      const P = { hip, shoulder, head: [lean + 5, -STAND_HIP - 34.5], foot: kick, foot2: plant };
+      P.knee = legTo(hip, P.foot);
+      P.knee2 = legTo(hip, P.foot2);
       const sw = still ? 0 : keyed([[0, 0], [0.55, 0.9], [0.75, -0.7], [1.2, 0]], tau, lerp);
       P.elbow = polar(shoulder, 14, Math.PI / 2 - sw);
       P.hand = polar(P.elbow, 13, Math.PI / 2 - sw - 0.5);
       P.elbow2 = polar(shoulder, 14, Math.PI / 2 + sw * 0.8);
       P.hand2 = polar(P.elbow2, 13, Math.PI / 2 + sw * 0.8 - 0.5);
-      personMood(this, P, c, { arm: [14, 13], legs: [22, 23], standing: true });
+      personMood(this, P, c, { arm: [14, 13], legs: true, standing: true });
       setPerson(el, 'k-', P);
       cheeks(this.root, c);
       this.head = P.head;
@@ -1375,13 +1686,13 @@ const FIGURES = {
       el('cook').setAttribute('transform', `translate(${k.x.toFixed(2)} 0) scale(${vis.toFixed(3)} 1)`);
       const local = (w) => [(w[0] - k.x) / vis, w[1]];
       const handL = local(k.hand);
-      const hip = [0, -44];
+      const hip = [0, -STAND_HIP];
       const reach = handL[0];
       const lean = clamp((reach - 15) * 0.95, -4, 26) + Math.sin(t * 1.1) * 0.8;
       const P = {
         hip,
-        shoulder: rotAround([2, -68], hip, lean),
-        head: rotAround([5.5, -79.5], hip, lean),
+        shoulder: rotAround([2, -STAND_HIP - 24], hip, lean),
+        head: rotAround([5.5, -STAND_HIP - 35.5], hip, lean),
         foot: [6 + Math.max(0, lean - 12) * 0.3, 0],
         foot2: [-5, 0],
       };
@@ -1391,10 +1702,10 @@ const FIGURES = {
         const s2 = Math.sin(clamp(k.stepping * 2 - 1, 0, 1) * Math.PI);
         P.foot = [P.foot[0] + s1 * 4, -s1 * 4];
         P.foot2 = [P.foot2[0] + s2 * 3, -s2 * 3.5];
-        P.hip = [0, -44 - (s1 + s2) * 0.8];
+        P.hip = [0, -STAND_HIP - (s1 + s2) * 0.8];
       }
-      P.knee = ik(hip, P.foot, 22, 23, 1);
-      P.knee2 = ik(hip, P.foot2, 22, 23, 1);
+      P.knee = legTo(P.hip, P.foot);
+      P.knee2 = legTo(P.hip, P.foot2);
       const look = Math.atan2(handL[1] + 8 - P.head[1], handL[0] - P.head[0]);
       P.headTilt = clamp(deg(look) * 0.55, -14, 26);
       P.hand = handL;
@@ -1403,10 +1714,10 @@ const FIGURES = {
       if (k.mode === 'hand' && active) {
         P.hand2 = [handL[0] - 9, handL[1] + 6];
       } else {
-        P.hand2 = rotAround([-3, -45], hip, lean * 0.5);
+        P.hand2 = rotAround([-3, -STAND_HIP - 1], hip, lean * 0.5);
       }
       P.elbow2 = ik(P.shoulder, P.hand2, 16, 15, active && k.mode === 'hand' ? -1 : 1);
-      personMood(this, P, c, { arm: [16, 15], legs: [22, 23], standing: true });
+      personMood(this, P, c, { arm: [16, 15], legs: true, standing: true });
       setPerson(el, 'c-', P);
       cheeks(this.root, c);
       this.head = [k.x + P.head[0] * vis, P.head[1]];
@@ -1589,6 +1900,17 @@ class WeatherScene {
     const below = `<rect id="verge" y="${R + SC.ROAD_H}" width="${SC.W}" height="${SC.H - R - SC.ROAD_H}" fill="#121C16"/>`;
     switch (this.env) {
       case 'road':
+        if (this.figure.terrain) {
+          const posts = Array.from({ length: 3 }, (_, i) => `<g id="post${i}"><rect x="-1.6" y="-22" width="3.2" height="22" rx="1" fill="#E8EDF4"/><rect x="-1.6" y="-19" width="3.2" height="4" fill="#FF5F52"/></g>`).join('');
+          return `
+          <path id="land" fill="url(#grass)"/>
+          <g id="posts">${posts}</g>
+          <path id="road-b" fill="#1F2733"/>
+          <path id="wet" fill="#5C82B0" opacity="0"/>
+          <path id="road-edge" fill="none" stroke="#2E3848" stroke-width="1.5"/>
+          <path id="road-dash" fill="none" stroke="#55657F" stroke-width="2.5" stroke-dasharray="22 18"/>
+          <path id="verge" fill="#121C16"/>`;
+        }
         return `
           <rect y="${R}" width="${SC.W}" height="${SC.ROAD_H}" fill="#1F2733"/>
           <rect id="wet" y="${R}" width="${SC.W}" height="${SC.ROAD_H}" fill="#5C82B0" opacity="0"/>
@@ -1664,7 +1986,7 @@ class WeatherScene {
       ${this._ground()}`;
 
     const shadow = fig.shadow
-      ? `<ellipse cx="${fig.anchor[0] + fig.shadow[0] * fig.scale}" cy="${fig.anchor[1] + 1}" rx="${fig.shadow[1] * fig.scale}" ry="4" fill="#000" opacity="0.3"/>`
+      ? `<ellipse id="fig-sh" cx="${fig.anchor[0] + fig.shadow[0] * fig.scale}" cy="${fig.anchor[1] + 1}" rx="${fig.shadow[1] * fig.scale}" ry="4" fill="#000" opacity="0.3"/>`
       : '';
 
     return `
@@ -1843,7 +2165,7 @@ class WeatherScene {
     this.t += dt;
     const t = this.t;
     this.pace += (this.paceTarget - this.pace) * Math.min(1, dt * 1.5);
-    const v = this.figure.speed * this.pace;
+    const v = this.figure.plan ? this.figure.plan(dt, this.pace) : this.figure.speed * this.pace;
     this.dist += v * dt;
     const scroll = this.env === 'road' || this.env === 'path' || this.env === 'water';
     const vw = scroll ? v : 0;
@@ -1853,10 +2175,11 @@ class WeatherScene {
 
     this.figure.root = this.root;
     this.figure.update($, { dist: this.dist, t, dt, pace: this.pace, look: L, v: vw, mood: this.mood });
+    const cam = this._terrain(w);
     this._moodFx(dt);
 
     // Parallax: far things move slowly, near things fast.
-    $('hills-far').setAttribute('transform', `translate(${(-(w * 0.06) % 600).toFixed(1)} 0)`);
+    $('hills-far').setAttribute('transform', `translate(${(-(w * 0.06) % 600).toFixed(1)} ${(cam * 0.15).toFixed(1)})`);
     if (this.env === 'water') {
       [0, 1, 2].forEach((i) => {
         const x = -((w * (0.35 + i * 0.3) + t * (5 + wind * 0.35) * (1 + i * 0.4)) % 600);
@@ -1872,13 +2195,13 @@ class WeatherScene {
         cp.el.style.opacity = (capOn * 0.8 * Math.sin(cp.age * Math.PI)).toFixed(2);
       });
     } else {
-      $('hills-near').setAttribute('transform', `translate(${(-(w * 0.18) % 600).toFixed(1)} 0)`);
+      $('hills-near').setAttribute('transform', `translate(${(-(w * 0.18) % 600).toFixed(1)} ${(cam * 0.3).toFixed(1)})`);
       if ($('road-dash')) $('road-dash').style.strokeDashoffset = (w % 40).toFixed(1);
       const lean = -wind * 0.18;
       this.trees.forEach((tr) => {
         const x = scroll ? wrap(tr.x - w * 0.55, -70, 680) : tr.x;
         const sway = Math.sin(t * (1.4 + wind * 0.03) + tr.ph) * (0.6 + wind * 0.12);
-        tr.el.setAttribute('transform', `translate(${x.toFixed(1)} ${(this.env === 'road' || this.env === 'path' ? SC.ROAD_Y - 1 : SC.HORIZON + 4)})`);
+        tr.el.setAttribute('transform', `translate(${x.toFixed(1)} ${((this.env === 'road' || this.env === 'path' ? SC.ROAD_Y - 1 : SC.HORIZON + 4) + cam * 0.45).toFixed(1)})`);
         tr.sway.setAttribute('transform', `scale(${tr.s}) rotate(${(lean + sway).toFixed(2)})`);
       });
     }
@@ -1951,7 +2274,7 @@ class WeatherScene {
       if (p) {
         p.age = 0;
         p.x = a[0] + mouth[0] * fs;
-        p.y = a[1] + mouth[1] * fs;
+        p.y = a[1] + (this.fy || 0) + mouth[1] * fs;
         p.vx = 24 * fs;
         p.vy = -2;
       }
@@ -1972,6 +2295,45 @@ class WeatherScene {
     });
   }
 
+  /**
+   * Road over hills: the road, the ground below it, roadside posts and the
+   * figure follow the height profile of the figure's plan. The camera
+   * follows part of the height. Returns that camera offset.
+   */
+  _terrain(w) {
+    const fig = this.figure;
+    this.fy = 0;
+    if (!fig.terrain || !this.$('road-b')) return 0;
+    const $ = this.$;
+    const ax = fig.anchor[0];
+    const e = (x) => fig.terrain(fig.s + (x - ax));
+    const cam = e(ax) * 0.6;
+    const top = (x) => SC.ROAD_Y - (e(x) - cam);
+    const xs = [];
+    for (let x = -20; x <= SC.W + 20; x += 10) xs.push(x);
+    const tops = xs.map(top);
+    const edge = xs.map((x, i) => `${x} ${tops[i].toFixed(1)}`).join(' L');
+    const back = xs.slice().reverse().map((x, i) => `${x} ${(tops[xs.length - 1 - i] + SC.ROAD_H).toFixed(1)}`).join(' L');
+    const band = `M${edge} L${back} Z`;
+    $('road-b').setAttribute('d', band);
+    $('wet').setAttribute('d', band);
+    $('road-edge').setAttribute('d', `M${edge}`);
+    $('road-dash').setAttribute('d', `M${xs.map((x, i) => `${x} ${(tops[i] + 17).toFixed(1)}`).join(' L')}`);
+    $('land').setAttribute('d', `M${xs.map((x, i) => `${x} ${(tops[i] - 6).toFixed(1)}`).join(' L')} L${SC.W + 20} ${SC.H} L-20 ${SC.H} Z`);
+    $('verge').setAttribute('d', `M${back.split(' L').reverse().join(' L')} L${SC.W + 20} ${SC.H} L-20 ${SC.H} Z`);
+    for (let i = 0; i < 3; i += 1) {
+      const x = wrap(120 + i * 240 - w, -30, 690);
+      $(`post${i}`).setAttribute('transform', `translate(${x.toFixed(1)} ${(top(x) + 2).toFixed(1)})`);
+    }
+    // The figure stands on the road and tilts with the slope.
+    const dy = -(e(ax) - cam);
+    const slope = -deg(Math.atan2(e(ax + 6) - e(ax - 6), 12));
+    $('fig').setAttribute('transform', `translate(${ax} ${(fig.anchor[1] + dy).toFixed(1)}) rotate(${slope.toFixed(2)}) scale(${fig.scale || 1})`);
+    if ($('fig-sh')) $('fig-sh').setAttribute('transform', `translate(0 ${dy.toFixed(1)})`);
+    this.fy = dy;
+    return cam;
+  }
+
   /** Sweat, heat haze and flying leaves, driven by the mood. */
   _moodFx(dt) {
     const $ = this.$;
@@ -1981,7 +2343,7 @@ class WeatherScene {
     const fs = this.figure.scale || 1;
     const head = this.figure.head || this.figure.mouth;
     const hx = a[0] + head[0] * fs;
-    const hy = a[1] + head[1] * fs;
+    const hy = a[1] + (this.fy || 0) + head[1] * fs;
 
     // Hot: now and then a drop of sweat runs down the face and drips off.
     const hot = mood.hot || 0;
