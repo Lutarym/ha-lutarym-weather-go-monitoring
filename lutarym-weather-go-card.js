@@ -480,6 +480,7 @@ function personSvg(p, o) {
       <circle r="7.4" fill="${SKIN}"/>
       ${o.hat || `<path d="M-7.4 -0.5 A7.4 7.4 0 0 1 6.9 -3 Q1 -5 -7.4 -0.5 Z" fill="${o.hair || '#4A3426'}"/>`}
       <circle cx="4" cy="-1" r="0.9" fill="#0B1017"/>
+      <circle class="cheek" cx="3" cy="2.6" r="2.3" fill="#FF5F52" opacity="0"/>
     </g>
     ${s('th', o.pants, 10)}${s('sh', o.leg || SKIN, 7.5)}${s('fo', o.shoes, 5.5)}
     ${o.extra || ''}
@@ -501,6 +502,87 @@ function setPerson(el, p, P) {
   line(el, `${p}la`, P.elbow, P.hand);
   line(el, `${p}ua2`, P.shoulder, P.elbow2);
   line(el, `${p}la2`, P.elbow2, P.hand2);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Reactions to unsuitable weather.
+ *  mood = { cold, hot, wind, rain, calm }, each 0 (fine), 0.5 (borderline)
+ *  or 1 (unsuitable). Poses are only used at 1, while the figure stands.
+ * ------------------------------------------------------------------ */
+function rotAround(p, c, degrees) {
+  const a = (degrees * Math.PI) / 180;
+  const dx = p[0] - c[0];
+  const dy = p[1] - c[1];
+  return [c[0] + dx * Math.cos(a) - dy * Math.sin(a), c[1] + dx * Math.sin(a) + dy * Math.cos(a)];
+}
+
+/** The reason that shapes the pose; rain first, it is the most visible. */
+function moodReason(mood) {
+  if (!mood) return null;
+  return ['rain', 'cold', 'wind', 'hot'].find((k) => mood[k] >= 1) || null;
+}
+
+/** Leans the upper body around the hip (positive = forward, into the wind). */
+function leanPose(P, degrees) {
+  ['shoulder', 'head', 'elbow', 'hand', 'elbow2', 'hand2'].forEach((k) => {
+    if (P[k]) P[k] = rotAround(P[k], P.hip, degrees);
+  });
+}
+
+/**
+ * Arm and head pose for the reason. keepNear leaves the near arm alone
+ * (it holds an umbrella or the handlebar).
+ */
+function moodPose(P, reason, t, keepNear) {
+  if (!reason) return;
+  const sh = P.shoulder;
+  const hd = P.head;
+  const near = (elbow, hand) => { if (!keepNear) { P.elbow = elbow; P.hand = hand; } };
+  if (reason === 'cold') {
+    // Arms wrapped around the body, head pulled in.
+    near([sh[0] + 6, sh[1] + 13], [sh[0] - 5, sh[1] + 7]);
+    P.elbow2 = [sh[0] + 4, sh[1] + 14];
+    P.hand2 = [sh[0] - 7, sh[1] + 10];
+    P.head = [hd[0] - 1, hd[1] + 2.5];
+    P.headTilt = 12;
+  } else if (reason === 'rain') {
+    // Hands held over the head, ducking.
+    near([sh[0] + 11, sh[1] - 5], [hd[0] + 2, hd[1] - 8]);
+    P.elbow2 = [sh[0] - 8, sh[1] - 6];
+    P.hand2 = [hd[0] - 4, hd[1] - 8.5];
+    P.head = [hd[0] + 1, hd[1] + 2.5];
+    P.headTilt = 14;
+  } else if (reason === 'wind') {
+    // Shields the face, far arm out for balance.
+    near([sh[0] + 12, sh[1] + 5], [hd[0] + 9, hd[1] + 1]);
+    P.elbow2 = [sh[0] - 8, sh[1] + 11];
+    P.hand2 = [sh[0] - 15, sh[1] + 21];
+    P.headTilt = 10;
+  } else if (reason === 'hot') {
+    // Wipes the forehead now and then, far arm hangs limp.
+    const cyc = (t % 2.6) / 2.6;
+    const wipe = cyc < 0.5 ? Math.sin(cyc * 2 * Math.PI * 2) : 0;
+    near([sh[0] + 13, sh[1] + 1], [hd[0] + 7 - Math.abs(wipe) * 9, hd[1] - 3.5]);
+    P.elbow2 = [sh[0] - 1, sh[1] + 14];
+    P.hand2 = [sh[0] + 1, sh[1] + 27];
+    P.head = [hd[0], hd[1] + Math.sin(t * 9) * 0.6];
+    P.headTilt = -8;
+  }
+}
+
+/** Applies lean and pose for a standing person. */
+function moodPerson(P, c, keepNear) {
+  const reason = c.pace < 0.3 ? moodReason(c.mood) : null;
+  if (reason === 'wind') leanPose(P, 9);
+  if (reason === 'rain' || reason === 'cold') leanPose(P, 4);
+  moodPose(P, reason, c.t, keepNear);
+}
+
+/** Red cheeks when cold or hot. */
+function cheeks(root, c) {
+  const m = c.mood || {};
+  const v = Math.max(m.hot || 0, (m.cold || 0) * 0.7);
+  root.querySelectorAll('.cheek').forEach((e) => e.setAttribute('opacity', (v * 0.6).toFixed(2)));
 }
 
 /** Running or walking cycle. Foot moves forward in the air, back on the ground. */
@@ -540,9 +622,11 @@ const UMBRELLA = `
   <g id="umb" opacity="0">
     <path d="M0 0 V-32" stroke="#2A3445" stroke-width="2"/>
     <path d="M0 0 q0 5 -4 4.5" stroke="#2A3445" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+    <g id="umb-c">
     <path d="M-27 -30 Q-25 -54 0 -56 Q25 -54 27 -30 q-4.5 -4 -9 0 q-4.5 -4 -9 0 q-4.5 -4 -9 0 q-4.5 -4 -9 0 q-4.5 -4 -9 0 q-4.5 -4 -9 0 Z" fill="#FF7A1A"/>
     <path d="M0 -56 Q-9 -46 -9 -30 M0 -56 Q9 -46 9 -30" stroke="#C9601A" stroke-width="1.2" fill="none"/>
     <path d="M0 -56 V-60" stroke="#2A3445" stroke-width="2" stroke-linecap="round"/>
+    </g>
   </g>`;
 
 const FIGURES = {
@@ -575,6 +659,7 @@ const FIGURES = {
           <path d="M-9 -44 Q4 -62 20 -63" stroke="#3D8BFF" stroke-width="14" stroke-linecap="round" fill="none"/>
           <path d="M-9 -44 Q4 -62 20 -63" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="3" stroke-linecap="round" fill="none" transform="translate(0 -4)"/>
           <circle cx="29" cy="-71" r="7.5" fill="${SKIN}"/>
+          <circle id="f-cheek" cx="32" cy="-68" r="2.3" fill="#FF5F52" opacity="0"/>
           <path d="M20.5 -72.5 a9 9 0 0 1 17.5 -2 l3 1.6 h-5 Z" fill="#FFC107"/>
           <path d="M32 -74.5 h7" stroke="#0B1017" stroke-width="2" stroke-linecap="round"/>
         </g>
@@ -590,27 +675,43 @@ const FIGURES = {
       el('f-spk-r').setAttribute('transform', `rotate(${wheel.toFixed(1)})`);
       el('f-spk-f').setAttribute('transform', `rotate(${wheel.toFixed(1)})`);
       const crank = (c.dist / 21) * 0.55;
+      // When the bike stops the rider slides forward and puts a foot down.
+      const stop = 1 - Math.min(1, c.pace * 3);
       const bob = Math.sin(crank * 2) * 0.7 * Math.min(1, c.pace * 2);
-      el('f-body').setAttribute('transform', `translate(0 ${bob.toFixed(2)})`);
-      const hip = [-8, -43 + bob];
+      const reason = stop > 0.5 ? moodReason(c.mood) : null;
+      const lean = reason === 'wind' ? 8 : reason === 'rain' || reason === 'cold' ? 4 : 0;
+      const rotA = -12 * stop + lean;
+      const dx = 10 * stop;
+      const dy = 9 * stop + bob;
+      el('f-body').setAttribute('transform', `translate(${dx.toFixed(2)} ${dy.toFixed(2)}) rotate(${rotA.toFixed(2)} -9 -44)`);
+      const tp = (q) => { const r = rotAround(q, [-9, -44], rotA); return [r[0] + dx, r[1] + dy]; };
+      const hip = tp([-8, -43]);
       const bb = [0, 4];
-      const leg = (a, thigh, shin, shoe, crankEl) => {
+      const leg = (a, thigh, shin, shoe, crankEl, ground) => {
         const pedal = polar(bb, 10, a);
-        const knee = ik(hip, pedal, 26, 28, 1);
+        const foot = ground ? lerpPt(pedal, [9, 21], stop) : pedal;
+        const knee = ik(hip, foot, 26, 28, 1);
         line(el, thigh, hip, knee);
-        line(el, shin, knee, pedal);
-        line(el, shoe, [pedal[0] - 2, pedal[1]], [pedal[0] + 6, pedal[1] + 0.8]);
+        line(el, shin, knee, foot);
+        line(el, shoe, [foot[0] - 2, foot[1]], [foot[0] + 6, foot[1] + 0.8]);
         line(el, crankEl, bb, pedal);
       };
-      leg(crank + Math.PI, 'f-thigh2', 'f-shin2', 'f-shoe2', 'f-crank2');
-      leg(crank, 'f-thigh', 'f-shin', 'f-shoe', 'f-crank');
-      const shoulder = [19, -62 + bob];
-      const elbow = ik(shoulder, [40, -36], 17, 17, -1);
-      line(el, 'f-arm', shoulder, elbow);
-      line(el, 'f-fore', elbow, [40, -36]);
+      leg(crank + Math.PI, 'f-thigh2', 'f-shin2', 'f-shoe2', 'f-crank2', false);
+      leg(crank, 'f-thigh', 'f-shin', 'f-shoe', 'f-crank', true);
+      const shoulder = tp([19, -62]);
+      const P = { hip, shoulder, head: tp([29, -71]) };
+      P.hand = [40, -36];
+      P.elbow = ik(shoulder, P.hand, 17, 17, -1);
       const s2 = [shoulder[0] - 3, shoulder[1]];
-      const elbow2 = ik(s2, [37, -37], 17, 17, -1);
-      el('f-arm2').setAttribute('d', `M${pt(s2)} L${pt(elbow2)} L37 -37`);
+      P.hand2 = [37, -37];
+      P.elbow2 = ik(s2, P.hand2, 17, 17, -1);
+      // Reaction poses use the arms; the head stays in the body group.
+      moodPose(P, reason, c.t, false);
+      line(el, 'f-arm', shoulder, P.elbow);
+      line(el, 'f-fore', P.elbow, P.hand);
+      el('f-arm2').setAttribute('d', `M${pt(s2)} L${pt(P.elbow2)} L${pt(P.hand2)}`);
+      el('f-cheek').setAttribute('opacity', (Math.max(c.mood.hot || 0, (c.mood.cold || 0) * 0.7) * 0.6).toFixed(2));
+      this.head = tp([29, -71]);
     },
   },
 
@@ -635,7 +736,10 @@ const FIGURES = {
         stride: 6 + 10 * k, lift: 3 + 9 * k, hipY: 44, lean: 4 + 4 * k, thigh: 22, shin: 23,
         bob: (a) => -Math.abs(Math.cos(a)) * 2.4 * k, armSwing: 0.25 + 0.6 * k, elbowBend: 1.25 + 0.4 * k,
       });
+      moodPerson(P, c, false);
       setPerson(el, 'r-', P);
+      cheeks(this.root, c);
+      this.head = P.head;
     },
   },
 
@@ -666,10 +770,17 @@ const FIGURES = {
       if (umbrella) {
         P.elbow = [P.shoulder[0] + 3, P.shoulder[1] + 13];
         P.hand = [P.shoulder[0] + 11, P.shoulder[1] + 5];
-        const tilt = 6 + clamp(c.look.wind, 0, 60) * 0.35 + Math.sin(c.t * 5) * clamp(c.look.wind / 12, 0.4, 4);
+        const storm = (c.mood.wind || 0) >= 1;
+        const shake = storm ? 9 : clamp(c.look.wind / 12, 0.4, 4);
+        const tilt = 6 + clamp(c.look.wind, 0, 60) * 0.35 + Math.sin(c.t * (storm ? 11 : 5)) * shake;
         el('umb').setAttribute('transform', `translate(${pt(P.hand)}) rotate(${tilt.toFixed(1)})`);
+        // Storm turns the umbrella inside out.
+        el('umb-c').setAttribute('transform', storm ? `translate(0 ${(-60 + Math.sin(c.t * 13) * 1.5).toFixed(1)}) scale(1 -1)` : '');
       }
+      moodPerson(P, c, umbrella);
       setPerson(el, 'w-', P);
+      cheeks(this.root, c);
+      this.head = P.head;
     },
   },
 
@@ -703,6 +814,7 @@ const FIGURES = {
       const bob = Math.sin(c.t * 1.9) * 1.2 * sea;
       const pitch = Math.sin(c.t * 1.5 + 0.7) * 1.4 * sea - c.pace * 2.5;
       el('boat').setAttribute('transform', `translate(0 ${bob.toFixed(2)}) rotate(${pitch.toFixed(2)} 0 4)`);
+      this.head = [-14, -22 + bob];
       // Foam trail behind the stern, carried away with the boat's speed.
       if (!this.foam) {
         this.foam = Array.from({ length: 18 }, (_, i) => ({ el: el(`fm${i}`), age: i / 18, x: 0, y: 0, r: 2 }));
@@ -753,14 +865,23 @@ const FIGURES = {
       const wind = clamp(c.look.wind, 0, 60);
       const sea = 1 + wind * 0.05;
       // Wind comes from the right, the boat heels to the left.
-      const heel = -(3 + wind * 0.42) * (0.35 + 0.65 * Math.min(1, c.pace * 1.5)) + Math.sin(c.t * 1.3) * 1.5 * sea;
+      const heel = -(3 + wind * 0.42) * (0.35 + 0.65 * Math.min(1, c.pace * 1.5)) * (1 - (c.mood.calm || 0) * 0.8)
+        + Math.sin(c.t * 1.3) * 1.5 * sea;
       const bob = Math.sin(c.t * 1.7) * 1.3 * sea;
       el('yacht').setAttribute('transform', `translate(0 ${bob.toFixed(2)}) rotate(${heel.toFixed(2)} 0 8)`);
       // Sails fill with the wind and flutter a little.
-      const belly = 6 + wind * 0.45 + Math.sin(c.t * 7) * (0.4 + wind * 0.02);
-      el('main').setAttribute('d', `M3 -96 L3 -10 L-35 -10 Q${(-14 - belly).toFixed(1)} -50 3 -96 Z`);
-      el('main-sh').setAttribute('d', `M3 -96 L3 -10 L-8 -10 Q${(-3 - belly * 0.35).toFixed(1)} -50 3 -96 Z`);
+      // Calm: sails hang slack and flap. Storm: mainsail reefed, jib down.
+      const calm = c.mood.calm || 0;
+      const reef = (c.mood.wind || 0) >= 1 ? 1 : 0;
+      this.reef = lerp(this.reef || 0, reef, Math.min(1, c.dt * 1.5));
+      const flap = calm ? Math.sin(c.t * 3.1) * 4 * calm : 0;
+      const belly = (6 + wind * 0.45) * (1 - calm * 0.85) + Math.sin(c.t * 7) * (0.4 + wind * 0.02) + flap;
+      const top = lerp(-96, -58, this.reef);
+      el('main').setAttribute('d', `M3 ${top.toFixed(1)} L3 -10 L-35 -10 Q${(-14 - belly).toFixed(1)} ${((top - 10) / 2).toFixed(1)} 3 ${top.toFixed(1)} Z`);
+      el('main-sh').setAttribute('d', `M3 ${top.toFixed(1)} L3 -10 L-8 -10 Q${(-3 - belly * 0.35).toFixed(1)} ${((top - 10) / 2).toFixed(1)} 3 ${top.toFixed(1)} Z`);
       el('jib').setAttribute('d', `M3 -86 L42 -4 L10 -6 Q${(4 - belly * 0.5).toFixed(1)} -40 3 -86 Z`);
+      el('jib').style.opacity = (1 - this.reef).toFixed(2);
+      this.head = [-18, -12 + bob];
       const fl = Math.sin(c.t * (6 + wind * 0.25)) * 2.5;
       el('flag').setAttribute('d', `M2 -98 L-12 ${(-96 + fl).toFixed(1)} L2 -92 Z`);
     },
@@ -814,7 +935,10 @@ const FIGURES = {
       P.hand = polar(P.elbow, 13, Math.PI / 2 - sw - 0.5);
       P.elbow2 = polar(shoulder, 14, Math.PI / 2 + sw * 0.8);
       P.hand2 = polar(P.elbow2, 13, Math.PI / 2 + sw * 0.8 - 0.5);
+      moodPerson(P, c, false);
       setPerson(el, 'k-', P);
+      cheeks(this.root, c);
+      this.head = P.head;
 
       // Ball: rests at the foot, flies on an arc after the kick, drifts with the wind.
       const start = [14, -6.5];
@@ -932,8 +1056,12 @@ const FIGURES = {
       P.hand = [-44, -54 - work * 8];
       P.elbow2 = [-70, -54];
       P.hand2 = [-64, -46];
+      moodPerson(P, c, false);
       setPerson(el, 'c-', P);
-      line(el, 'tongs', P.hand, [-14, -50 - work * 6]);
+      cheeks(this.root, c);
+      this.head = P.head;
+      if (moodReason(c.mood) && c.pace < 0.3) el('tongs').setAttribute('d', '');
+      else line(el, 'tongs', P.hand, [-14, -50 - work * 6]);
     },
   },
 };
@@ -962,6 +1090,7 @@ class WeatherScene {
     if (this.figure.init) this.figure.init();
     this.env = this.figure.env;
     this.look = weatherLook(null);
+    this.mood = {};
     this.pace = 0;
     this.paceTarget = 0;
     this.dist = 0;
@@ -1072,6 +1201,10 @@ class WeatherScene {
           <stop offset="0.55" stop-color="#BFE3FF" stop-opacity="0"/>
           <stop offset="1" stop-color="#BFE3FF" stop-opacity="0.55"/>
         </radialGradient>
+        <linearGradient id="heatg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#FFB050" stop-opacity="0.05"/>
+          <stop offset="1" stop-color="#FF7A1A" stop-opacity="0.55"/>
+        </linearGradient>
         <linearGradient id="overcastg" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#1E252F" stop-opacity="1"/>
           <stop offset="0.55" stop-color="#2A333F" stop-opacity="0.85"/>
@@ -1106,14 +1239,21 @@ class WeatherScene {
       ${land}
 
       ${shadow}
+      <g id="haze">${Array.from({ length: 6 }, (_, i) => `<path class="haze" id="hz${i}" d="M0 0 q3 -6 0 -12 t0 -12 t0 -12"/>`).join('')}</g>
       <g id="fig" transform="translate(${fig.anchor[0]} ${fig.anchor[1]}) scale(${fig.scale || 1})">${fig.build()}</g>
       <g id="puffs">${puffs}</g>
+      <g id="fx">
+        ${Array.from({ length: 6 }, (_, i) => `<path class="sweat" id="sw${i}" d="M0 -3.2 Q2.2 0 0 2.2 Q-2.2 0 0 -3.2 Z"/>`).join('')}
+        <path class="shiver" id="shv" d="M-17 -6 q-3.5 6 0 12 M-22 -9 q-4.5 9 0 18 M17 -6 q3.5 6 0 12 M22 -9 q4.5 9 0 18"/>
+        ${Array.from({ length: 7 }, (_, i) => `<path class="leaf" id="lf${i}" d="M-4 0 Q0 -4 4 0 Q0 4 -4 0 Z" fill="${['#7A9A3A', '#C9A227', '#A0632B'][i % 3]}"/>`).join('')}
+      </g>
 
       <g id="splashes">${splashes}</g>
       <g id="drops">${drops}</g>
       <g id="flakes">${flakes}</g>
       <g id="streaks">${streaks}</g>
       <rect id="frost-o" width="${SC.W}" height="${SC.H}" fill="url(#frost)" opacity="0" pointer-events="none"/>
+      <rect id="heat-o" width="${SC.W}" height="${SC.H}" fill="url(#heatg)" opacity="0" pointer-events="none"/>
       <rect id="shade" width="${SC.W}" height="${SC.H}" fill="#06090D" opacity="0" pointer-events="none"/>`;
   }
 
@@ -1128,6 +1268,9 @@ class WeatherScene {
     for (let i = 0; i < SC.SPLASH_POOL; i += 1) this.splashes.push({ el: byId(`p${i}`), age: 1 });
     for (let i = 0; i < SC.STREAKS; i += 1) this.streaks.push({ el: byId(`w${i}`), x: rnd(0, 800), y: rnd(30, 200), s: rnd(0.7, 1.3) });
     for (let i = 0; i < 5; i += 1) this.puffs.push({ el: byId(`b${i}`), age: i / 5 });
+    this.sweat = Array.from({ length: 6 }, (_, i) => ({ el: byId(`sw${i}`), age: 1, x: 0, y: 0, vx: 0, vy: 0 }));
+    this.haze = Array.from({ length: 6 }, (_, i) => ({ el: byId(`hz${i}`), age: i / 6, x: 60 + i * 95 }));
+    this.leaves = Array.from({ length: 7 }, (_, i) => ({ el: byId(`lf${i}`), x: rnd(0, 900), y: rnd(60, 230), r: rnd(0, 360), s: rnd(0.8, 1.4) }));
     if (this.env !== 'water') {
       // Static places get their trees spread behind the action.
       const xs = this.env === 'pitch' ? [30, 120, 330, 420, 560] : this.env === 'garden' ? [40, 150, 450, 540, 640] : [40, 190, 330, 470, 610];
@@ -1142,15 +1285,22 @@ class WeatherScene {
   }
 
   /** New forecast: colours and shapes are set here, motion in step(). */
-  setLook(look, pace) {
+  setLook(look, pace, mood) {
     this.look = look;
     this.paceTarget = pace;
+    this.mood = mood || {};
     const $ = this.$;
     if (!$) return;
-    const L = look;
+    // When cold or heat is the problem, the scene shows it more clearly.
+    const L = {
+      ...look,
+      cold: Math.max(look.cold, (this.mood.cold || 0) * 0.75),
+      hot: Math.max(look.hot, this.mood.hot || 0),
+    };
     // Clear day sky turns grey with clouds, warm at the horizon when hot,
     // pale blue when cold.
     let top = mix('#1C5A9E', '#2A323D', L.cloud);
+    top = mix(top, '#3F6FA0', L.hot * 0.3 * (1 - L.cloud));
     let bot = mix('#7DB6E6', '#56616F', L.cloud);
     bot = mix(bot, '#F2B067', L.hot * 0.6 * (1 - L.cloud));
     top = mix(top, '#4F7AA6', L.cold * 0.35 * (1 - L.cloud));
@@ -1189,7 +1339,8 @@ class WeatherScene {
       c.el.setAttribute('fill', cloudFill);
       c.el.style.opacity = i < visible ? (0.35 + L.cloud * 0.6).toFixed(2) : '0';
     });
-    $('frost-o').setAttribute('opacity', (L.cold * 0.5).toFixed(2));
+    $('frost-o').setAttribute('opacity', (L.cold * 0.6).toFixed(2));
+    $('heat-o').setAttribute('opacity', (L.hot * (this.mood.hot ? 0.45 : 0.2)).toFixed(2));
     $('shade').setAttribute('opacity', (L.rain * 0.3 + L.cloud * 0.08).toFixed(2));
     this.activeDrops = Math.round(L.rain * SC.RAIN_POOL);
     this.drops.forEach((d, i) => {
@@ -1221,7 +1372,9 @@ class WeatherScene {
     const w = this.world;
     const wind = clamp(L.wind || 0, 0, 80);
 
-    this.figure.update($, { dist: this.dist, t, dt, pace: this.pace, look: L, v: vw });
+    this.figure.root = this.root;
+    this.figure.update($, { dist: this.dist, t, dt, pace: this.pace, look: L, v: vw, mood: this.mood });
+    this._moodFx(dt);
 
     // Parallax: far things move slowly, near things fast.
     $('hills-far').setAttribute('transform', `translate(${(-(w * 0.06) % 600).toFixed(1)} 0)`);
@@ -1306,17 +1459,75 @@ class WeatherScene {
     });
 
     // Breath clouds when it is cold.
-    const m = this.figure.mouth;
     const a = this.figure.anchor;
     const fs = this.figure.scale || 1;
+    const m = this.figure.head ? [this.figure.head[0] + 10, this.figure.head[1] + 2] : this.figure.mouth;
     this.puffs.forEach((p) => {
       p.age += dt / 1.6;
       if (p.age >= 1) p.age -= 1;
       const k = p.age;
-      p.el.setAttribute('cx', (a[0] + m[0] * fs + 4 - k * (18 + wind * 0.5 + vw * 0.12)).toFixed(1));
-      p.el.setAttribute('cy', (a[1] + m[1] * fs - k * 8).toFixed(1));
-      p.el.setAttribute('r', (2 + k * 6).toFixed(1));
-      p.el.style.opacity = (L.cold * 0.55 * Math.sin(k * Math.PI)).toFixed(2);
+      const drift = k * (16 - Math.min(wind, 30) * 0.35) - k * k * vw * 0.25;
+      p.el.setAttribute('cx', (a[0] + m[0] * fs + drift).toFixed(1));
+      p.el.setAttribute('cy', (a[1] + m[1] * fs - k * 12).toFixed(1));
+      p.el.setAttribute('r', (1.5 + k * 5.5).toFixed(1));
+      p.el.style.opacity = (Math.max(L.cold, this.mood.cold || 0) * 0.6 * Math.sin(k * Math.PI)).toFixed(2);
+    });
+  }
+
+  /** Shivering, sweat, heat haze and flying leaves, driven by the mood. */
+  _moodFx(dt) {
+    const $ = this.$;
+    const mood = this.mood;
+    const t = this.t;
+    const a = this.figure.anchor;
+    const fs = this.figure.scale || 1;
+    const head = this.figure.head || this.figure.mouth;
+    const hx = a[0] + head[0] * fs;
+    const hy = a[1] + head[1] * fs;
+
+    // Cold: the whole figure trembles, with little shiver marks.
+    const cold = mood.cold || 0;
+    const jitter = cold * Math.sin(t * 55) * (cold >= 1 ? 0.9 : 0.4);
+    $('fig').setAttribute('transform', `translate(${(a[0] + jitter).toFixed(2)} ${a[1]}) scale(${fs})`);
+    $('shv').setAttribute('transform', `translate(${hx.toFixed(1)} ${(hy + 24 * fs).toFixed(1)})`);
+    $('shv').style.opacity = cold >= 1 ? (0.35 + 0.35 * Math.abs(Math.sin(t * 14))).toFixed(2) : '0';
+
+    // Hot: sweat drops fly off the head, the air shimmers above the ground.
+    const hot = mood.hot || 0;
+    this.sweat.forEach((d) => {
+      if (d.age >= 1) {
+        if (hot > 0 && Math.random() < dt * 6 * hot) {
+          d.age = 0;
+          d.x = hx + rnd(-6, 2) * fs;
+          d.y = hy - rnd(2, 6) * fs;
+          d.vx = rnd(-30, -8);
+          d.vy = rnd(-40, -10);
+        } else { d.el.style.opacity = '0'; return; }
+      }
+      d.age += dt / 0.8;
+      d.vy += 260 * dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.el.setAttribute('transform', `translate(${d.x.toFixed(1)} ${d.y.toFixed(1)}) scale(${(fs * 0.9).toFixed(2)})`);
+      d.el.style.opacity = (0.9 * (1 - d.age)).toFixed(2);
+    });
+    this.haze.forEach((h) => {
+      h.age += dt / 2.2;
+      if (h.age >= 1) h.age -= 1;
+      h.el.setAttribute('transform', `translate(${(h.x + Math.sin(t * 2 + h.x) * 3).toFixed(1)} ${(SC.ROAD_Y + 6 - h.age * 50).toFixed(1)})`);
+      h.el.style.opacity = (hot * 0.5 * Math.sin(h.age * Math.PI)).toFixed(2);
+    });
+
+    // Wind: leaves tumble through the scene.
+    const windy = Math.max(mood.wind || 0, clamp(((this.look.wind || 0) - 35) / 20, 0, 1));
+    const ws = 120 + (this.look.wind || 0) * 6;
+    this.leaves.forEach((l) => {
+      l.x -= ws * l.s * dt;
+      l.r += 420 * dt * l.s;
+      if (l.x < -20) { l.x = SC.W + rnd(20, 300); l.y = rnd(60, 230); }
+      const y = l.y + Math.sin(t * 3 + l.x * 0.02) * 12;
+      l.el.setAttribute('transform', `translate(${l.x.toFixed(1)} ${y.toFixed(1)}) rotate(${(l.r % 360).toFixed(0)}) scale(${l.s.toFixed(2)})`);
+      l.el.style.opacity = (windy * 0.95).toFixed(2);
     });
   }
 
@@ -1337,6 +1548,27 @@ const TILE_ICON = {
   wind: '<path d="M-11 -4.5 H4 a3 3 0 1 0 -3 -3 M-11 1 H7.5 a3 3 0 1 1 -3 3 M-11 6.5 H0"/>',
   temp: '<path d="M-2.6 3.6 V-8.4 a2.6 2.6 0 0 1 5.2 0 V3.6 a4.8 4.8 0 1 1 -5.2 0 Z M0 -4 V5"/>',
 };
+
+/**
+ * Why the weather is not right, per reason: 1 = unsuitable, 0.5 = borderline.
+ * cold/hot from the daily minimum temperature, calm only for wind range
+ * activities (sailing) when there is too little wind.
+ */
+function moodOf(res, c) {
+  const { m, rating } = res;
+  const sev = (r) => (r === 'bad' ? 1 : r === 'warn' ? 0.5 : 0);
+  const mood = { cold: 0, hot: 0, wind: 0, rain: 0, calm: 0 };
+  mood.rain = sev(rating.rain);
+  if (rating.temp !== 'ok') {
+    if (m.tempMin < c.temp_ideal_min) mood.cold = sev(rating.temp);
+    else mood.hot = sev(rating.temp);
+  }
+  if (rating.wind !== 'ok') {
+    if (c.wind_mode === 'range' && m.windAvg < c.wind_ideal_min) mood.calm = sev(rating.wind);
+    else mood.wind = sev(rating.wind);
+  }
+  return mood;
+}
 
 /* ================================================================== *
  *  Card
@@ -1533,7 +1765,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       $('verdict').textContent = this._state === 'loading' ? t(hass, 'loading') : t(hass, 'noData');
       $('badge').style.setProperty('--accent', COLOR.neutral);
       ['rain', 'wind', 'temp'].forEach((id) => this._tile(id, null, '', '–', '', ''));
-      this._scene.setLook(weatherLook(null), 0);
+      this._scene.setLook(weatherLook(null), 0, {});
       return;
     }
 
@@ -1554,7 +1786,7 @@ class LutarymWeatherGoCard extends HTMLElement {
     this._tile('temp', rating.temp, t(hass, 'pre_min'), fmt1(m.tempMin), '°C',
       `${t(hass, 'pre_max')} ${fmt1(m.tempMax)} °C`);
 
-    this._scene.setLook(weatherLook(m), PACE[overall]);
+    this._scene.setLook(weatherLook(m), PACE[overall], moodOf(res, c));
     if (prefersReducedMotion()) this._scene.still();
   }
 
@@ -1611,6 +1843,10 @@ class LutarymWeatherGoCard extends HTMLElement {
       .flame:nth-child(even) { fill: #FF7A1A; }
       .cap { fill: none; stroke: #F2F6FB; stroke-width: 1.6; stroke-linecap: round; opacity: 0; }
       .crest { fill: none; stroke: #BFD8F0; stroke-width: 1.4; }
+      .sweat { fill: #9CC3F0; opacity: 0; }
+      .shiver { fill: none; stroke: #BFE3FF; stroke-width: 1.6; stroke-linecap: round; opacity: 0; }
+      .haze { fill: none; stroke: #FFE0B0; stroke-width: 2; stroke-linecap: round; opacity: 0; }
+      .leaf { opacity: 0; }
 
       .badge {
         --accent: ${COLOR.neutral};

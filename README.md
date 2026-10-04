@@ -22,6 +22,16 @@ Weather in the scene follows the forecast for 06:00 to 18:00 (today, or tomorrow
 - **Temperature:** warm horizon and a larger sun when hot, breath clouds and frost when cold
 - **Verdict:** the figure moves at full pace for "Yes", slower for "Maybe", and stops for "Better not"
 
+When the weather is not suitable, the figure stops and reacts to the reason:
+
+- **Too cold:** wraps its arms around itself, shivers, red cheeks, breath clouds, frost at the edges
+- **Too hot:** wipes its forehead, sweat drops, heat shimmer, warm light
+- **Too windy:** leans into the wind and shields its face, leaves fly past, the umbrella turns inside out, the mainsail is reefed
+- **Too wet:** holds its hands over its head and ducks
+- **Too little wind (sailing):** sails hang slack and flap
+
+The cyclist gets off the saddle and puts a foot down. For "Maybe" the effects are lighter and the figure keeps moving.
+
 Below the scene the card shows the verdict and the values for rain, wind and temperature.
 
 Forecast: [Open-Meteo](https://open-meteo.com/) DWD ICON model, no API key required.
