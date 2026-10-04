@@ -67,4 +67,15 @@ Optional thresholds, each overrides the activity preset:
 | `wind_ideal_min` | km/h, only for sailing (wind range) |
 | `temp_ideal_min`, `temp_ideal_max`, `temp_tolerance` | °C |
 
+## Demo mode
+
+Switch on **Demo mode** in the visual editor (or `demo: true`) to see every scene without waiting for the weather. The card then cycles through sample weather: sunny, showers, storm, heavy rain, frost, snow and heat (plus calm for sailing). No forecast is loaded while demo mode is on. The top right shows the current sample weather and a thin bar counts down to the next change.
+
+```yaml
+demo: true
+demo_interval: 20   # seconds between weather changes, 5 to 600
+```
+
+The storm comedy of the cyclist takes about 17 seconds; use an interval of 18 seconds or more to see it in full.
+
 All options are also available in the visual editor. Languages: German and English.

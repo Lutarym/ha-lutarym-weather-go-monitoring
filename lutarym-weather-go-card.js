@@ -34,6 +34,8 @@
  *   temp_ideal_min: 15                # optional, °C
  *   temp_ideal_max: 30                # optional, °C
  *   temp_tolerance: 2                 # optional, °C
+ *   demo: true                        # optional, sample weather that changes by itself
+ *   demo_interval: 20                 # optional, seconds between weather changes in demo mode
  */
 
 const CARD_TAG = 'lutarym-weather-go-card';
@@ -82,6 +84,14 @@ const I18N = {
     editorTempMin: 'Ideal min. temperature (°C)',
     editorTempMax: 'Ideal max. temperature (°C)',
     editorTempTolerance: 'Tolerance (°C)',
+    sectionDemo: 'Demo',
+    editorDemo: 'Demo mode (sample weather)',
+    editorDemoHint: 'Shows every scene: the weather changes by itself, no real data is loaded.',
+    editorDemoInterval: 'Change weather every (seconds)',
+    demo: 'Demo',
+    demoNote: 'Sample weather, not real data',
+    demo_sunny: 'Sunny', demo_showers: 'Showers', demo_storm: 'Storm', demo_rain: 'Heavy rain',
+    demo_cold: 'Frost', demo_snow: 'Snow', demo_heat: 'Heat', demo_calm: 'Calm',
   },
   de: {
     loading: 'Wird geladen…',
@@ -119,6 +129,14 @@ const I18N = {
     editorTempMin: 'Ideal min. Temperatur (°C)',
     editorTempMax: 'Ideal max. Temperatur (°C)',
     editorTempTolerance: 'Toleranz (°C)',
+    sectionDemo: 'Demo',
+    editorDemo: 'Demomodus (Beispielwetter)',
+    editorDemoHint: 'Zeigt alle Szenen: Das Wetter wechselt von selbst, es werden keine echten Daten geladen.',
+    editorDemoInterval: 'Wetter wechseln alle (Sekunden)',
+    demo: 'Demo',
+    demoNote: 'Beispielwetter, keine echten Daten',
+    demo_sunny: 'Sonnig', demo_showers: 'Schauer', demo_storm: 'Sturm', demo_rain: 'Dauerregen',
+    demo_cold: 'Frost', demo_snow: 'Schnee', demo_heat: 'Hitze', demo_calm: 'Flaute',
   },
 };
 
@@ -2775,6 +2793,43 @@ const TILE_ICON = {
   temp: '<path d="M-2.6 3.6 V-8.4 a2.6 2.6 0 0 1 5.2 0 V3.6 a4.8 4.8 0 1 1 -5.2 0 Z M0 -4 V5"/>',
 };
 
+/* ------------------------------------------------------------------ *
+ *  Demo mode: sample weather that changes by itself, so every scene,
+ *  every reaction and every bit of comedy can be seen. Ranges are
+ *  [lowest, highest] over the day; chosen so each one triggers its
+ *  reason for all activities.
+ * ------------------------------------------------------------------ */
+const DEMO_WEATHER = [
+  { key: 'sunny', temp: [20, 25], prob: [0, 5], rain: [0, 0], wind: [11, 16] },
+  { key: 'showers', temp: [14, 19], prob: [25, 45], rain: [0.2, 0.9], wind: [16, 23] },
+  { key: 'storm', temp: [13, 17], prob: [10, 20], rain: [0, 0.1], wind: [42, 56] },
+  { key: 'rain', temp: [11, 14], prob: [85, 95], rain: [2, 4], wind: [10, 16] },
+  { key: 'cold', temp: [-5, 0], prob: [0, 5], rain: [0, 0], wind: [6, 10] },
+  { key: 'snow', temp: [-3, 0], prob: [70, 85], rain: [0.8, 2], wind: [12, 18] },
+  { key: 'heat', temp: [37, 41], prob: [0, 5], rain: [0, 0], wind: [5, 9] },
+  { key: 'calm', temp: [17, 22], prob: [0, 5], rain: [0, 0], wind: [1, 4], only: 'sailing' },
+];
+
+function demoList(activity) {
+  return DEMO_WEATHER.filter((d) => !d.only || d.only === activity);
+}
+
+/** Hourly values 06:00 to 18:00 for a demo weather, warmest at 15:00. */
+function demoHours(d) {
+  const out = [];
+  for (let h = WINDOW_START; h <= WINDOW_END; h += 1) {
+    const day = Math.max(0, Math.sin(((h - 6) / 18) * Math.PI * 1.5));
+    const wave = 0.5 + 0.5 * Math.sin(h * 1.3);
+    out.push({
+      temp: lerp(d.temp[0], d.temp[1], day),
+      rainProb: lerp(d.prob[0], d.prob[1], wave),
+      rain: lerp(d.rain[0], d.rain[1], wave),
+      wind: lerp(d.wind[0], d.wind[1], 0.5 + 0.5 * Math.sin(h * 0.9 + 1)),
+    });
+  }
+  return out;
+}
+
 /**
  * Why the weather is not right, per reason: 1 = unsuitable, 0.5 = borderline.
  * cold/hot from the daily minimum temperature, calm only for wind range
@@ -2843,15 +2898,36 @@ class LutarymWeatherGoCard extends HTMLElement {
       temp_ideal_min: num('temp_ideal_min', p.temp_ideal_min),
       temp_ideal_max: num('temp_ideal_max', p.temp_ideal_max),
       temp_tolerance: num('temp_tolerance', p.temp_tolerance),
+      demo: config.demo === true,
+      demo_interval: clamp(num('demo_interval', 20), 5, 600),
     };
 
     if (prev && prev.activity !== activity) this._built = false;
+    const demoChanged = !prev || prev.demo !== this._config.demo || prev.demo_interval !== this._config.demo_interval;
     const moved = prev && (prev.lat !== this._config.lat || prev.lon !== this._config.lon);
     if (this.isConnected) {
       this._build();
-      if (moved) this._fetch();
+      if (demoChanged) this._setupDemo();
+      if (moved && !this._config.demo) this._fetch();
       else this._refresh();
     }
+  }
+
+  /** Starts or stops the demo weather rotation. */
+  _setupDemo() {
+    clearInterval(this._demoTimer);
+    this._demoTimer = null;
+    if (!this._config || !this._config.demo || !this.isConnected) {
+      if (this._config && !this._config.demo && !this._hourly && this.isConnected) this._fetch();
+      return;
+    }
+    this._demoIdx = this._demoIdx || 0;
+    this._demoTimer = setInterval(() => {
+      this._demoIdx = (this._demoIdx + 1) % demoList(this._config.activity).length;
+      this._refresh();
+    }, this._config.demo_interval * 1000);
+    this._demoStart = performance.now();
+    this._refresh();
   }
 
   set hass(hass) {
@@ -2870,7 +2946,8 @@ class LutarymWeatherGoCard extends HTMLElement {
   connectedCallback() {
     this._build();
     if (!this._timer) this._timer = setInterval(() => this._fetch(), REFRESH_MS);
-    if (this._config && !this._abort) this._fetch();
+    if (this._config && this._config.demo) this._setupDemo();
+    else if (this._config && !this._abort) this._fetch();
     if (!this._observer && window.IntersectionObserver) {
       // Pause the animation while the card is out of view.
       this._observer = new IntersectionObserver((entries) => {
@@ -2885,6 +2962,8 @@ class LutarymWeatherGoCard extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._timer);
     this._timer = null;
+    clearInterval(this._demoTimer);
+    this._demoTimer = null;
     if (this._abort) this._abort.abort();
     this._abort = null;
     if (this._observer) this._observer.disconnect();
@@ -2896,7 +2975,7 @@ class LutarymWeatherGoCard extends HTMLElement {
   /* -------------------- Data -------------------- */
 
   async _fetch() {
-    if (!this._config) return;
+    if (!this._config || this._config.demo) return;
     if (this._abort) this._abort.abort();
     const ctrl = new AbortController();
     this._abort = ctrl;
@@ -2951,6 +3030,7 @@ class LutarymWeatherGoCard extends HTMLElement {
               <span class="verdict" id="verdict"></span>
             </div>
             <div class="when" id="when"></div>
+            <div class="demo-bar" id="demo-bar" hidden></div>
           </div>
           <div class="tiles">${tile('rain')}${tile('wind')}${tile('temp')}</div>
           <div class="src" id="src"></div>
@@ -2978,13 +3058,29 @@ class LutarymWeatherGoCard extends HTMLElement {
     $('lbl-rain').textContent = t(hass, 'rainLabel');
     $('lbl-wind').textContent = t(hass, 'windLabel');
     $('lbl-temp').textContent = t(hass, 'tempLabel');
-    $('src').textContent = t(hass, 'source');
+    $('src').textContent = c.demo ? t(hass, 'demoNote') : t(hass, 'source');
 
     const target = targetDate();
     const isTomorrow = isoDate(target) !== isoDate(new Date());
-    $('when').textContent = `${isTomorrow ? t(hass, 'tomorrow') : t(hass, 'today')} · 06:00–18:00`;
-
-    const hours = this._state === 'ready' ? dayHours(this._hourly, target) : null;
+    let hours;
+    if (c.demo) {
+      const list = demoList(c.activity);
+      const d = list[(this._demoIdx || 0) % list.length];
+      hours = demoHours(d);
+      $('when').textContent = `${t(hass, 'demo')} · ${t(hass, `demo_${d.key}`)}`;
+      // Progress bar until the next change.
+      const bar = $('demo-bar');
+      bar.style.transition = 'none';
+      bar.style.width = '0%';
+      bar.hidden = false;
+      void bar.offsetWidth;
+      bar.style.transition = `width ${c.demo_interval}s linear`;
+      bar.style.width = '100%';
+    } else {
+      $('demo-bar').hidden = true;
+      $('when').textContent = `${isTomorrow ? t(hass, 'tomorrow') : t(hass, 'today')} · 06:00–18:00`;
+      hours = this._state === 'ready' ? dayHours(this._hourly, target) : null;
+    }
     const res = hours ? evaluate(hours, c) : null;
 
     if (!res) {
@@ -3096,6 +3192,11 @@ class LutarymWeatherGoCard extends HTMLElement {
         font-size: 19px; font-weight: 700; color: var(--accent);
         transition: color 700ms ease;
       }
+      .demo-bar {
+        position: absolute; left: 0; bottom: 0; height: 3px; width: 0;
+        background: #3D8BFF; opacity: 0.85;
+      }
+      .demo-bar[hidden] { display: none; }
       .when {
         position: absolute; right: 10px; top: 10px;
         padding: 4px 10px; border-radius: 10px;
@@ -3210,6 +3311,34 @@ class LutarymWeatherGoCardEditor extends HTMLElement {
     return wrap;
   }
 
+  _checkRow(label, field, value, hintText) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row';
+    const l = document.createElement('label');
+    l.className = 'check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!value;
+    input.addEventListener('change', (ev) => {
+      const next = { ...this._config };
+      if (ev.target.checked) next[field] = true;
+      else delete next[field];
+      this._config = next;
+      this._render();
+      this._fireChanged();
+    });
+    l.appendChild(input);
+    l.appendChild(document.createTextNode(` ${label}`));
+    wrap.appendChild(l);
+    if (hintText) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = hintText;
+      wrap.appendChild(hint);
+    }
+    return wrap;
+  }
+
   _numberRow(label, field, value, placeholder, step) {
     const wrap = this._row(label);
     const input = document.createElement('input');
@@ -3279,6 +3408,8 @@ class LutarymWeatherGoCardEditor extends HTMLElement {
           padding-top: 12px; margin-top: 4px;
         }
         .hint { font-size: 11px; color: var(--secondary-text-color); }
+        .row label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+        .row label.check input { width: 18px; height: 18px; margin: 0; }
       </style>
       <div class="form"></div>`;
     const form = this.querySelector('.form');
@@ -3295,6 +3426,12 @@ class LutarymWeatherGoCardEditor extends HTMLElement {
       t(hass, 'editorTitle'), 'title', cfg.title, info.question,
       t(hass, 'editorTitleHint', { title: info.question }),
     ));
+
+    form.appendChild(this._section(t(hass, 'sectionDemo')));
+    form.appendChild(this._checkRow(t(hass, 'editorDemo'), 'demo', cfg.demo, t(hass, 'editorDemoHint')));
+    if (cfg.demo) {
+      form.appendChild(this._numberRow(t(hass, 'editorDemoInterval'), 'demo_interval', cfg.demo_interval ?? 20, 20, '1'));
+    }
 
     form.appendChild(this._section(t(hass, 'sectionRain')));
     form.appendChild(this._pair(
