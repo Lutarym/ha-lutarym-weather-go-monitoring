@@ -12,7 +12,7 @@ Each activity has its own animated scene, and the expected weather plays in it:
 | `boating` | Motorboat on the water with a foam trail |
 | `sailing` | Sailboat heeling in the wind, sails filling |
 | `football` | Player shooting at a goal |
-| `bbq` | Grill with flames and smoke, lid shut when it is a no |
+| `bbq` | A full grilling round: the cook takes the lid off, lays steaks on the grate, turns them, serves them and puts the lid back on; flames flare up, the steaks brown and get grill marks |
 
 Weather in the scene follows the forecast for 06:00 to 18:00 (today, or tomorrow after 18:00):
 
@@ -24,13 +24,13 @@ Weather in the scene follows the forecast for 06:00 to 18:00 (today, or tomorrow
 
 When the weather is not suitable, the figure stops and reacts to the reason:
 
-- **Too cold:** wraps its arms around itself, shivers, red cheeks, breath clouds, frost at the edges
-- **Too hot:** wipes its forehead, sweat drops, heat shimmer, warm light
-- **Too windy:** leans into the wind and shields its face, leaves fly past, the umbrella turns inside out, the mainsail is reefed
-- **Too wet:** holds its hands over its head and ducks
+- **Too cold:** shoulders drawn up, rubs its upper arms, the upper body shivers finely, steps from foot to foot, breath clouds in rhythm, frost at the edges; the cyclist blows into his hands
+- **Too hot:** wipes its forehead, fans some air, a drop of sweat runs down now and then, heat shimmer, warm light
+- **Too windy:** leans into the gusts with a wide stance and shields its eyes, leaves fly past, the umbrella turns inside out, the mainsail is reefed
+- **Too wet:** ducks, holds its hands over its head and steps on the spot
 - **Too little wind (sailing):** sails hang slack and flap
 
-The cyclist gets off the saddle and puts a foot down. For "Maybe" the effects are lighter and the figure keeps moving.
+Reactions fade in and out smoothly. The cyclist gets off the saddle and puts a foot down. For "Maybe" the effects are lighter and the figure keeps moving.
 
 Below the scene the card shows the verdict and the values for rain, wind and temperature.
 

@@ -465,49 +465,166 @@ function keyed(keys, time, mixFn) {
   return keys[keys.length - 1][1];
 }
 
-/**
- * A person seen from the side, facing right. Far limbs are drawn darker
- * behind the body, near limbs in front. extra goes between body and near
- * arm (for example an umbrella or tongs).
- */
-function personSvg(p, o) {
-  const s = (id, color, width) => `<path id="${p}${id}" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" fill="none"/>`;
-  return `
-    ${s('ua2', o.shirtFar, 6)}${s('la2', SKIN_FAR, 5)}
-    ${s('th2', o.pantsFar, 9)}${s('sh2', o.legFar || SKIN_FAR, 7)}${s('fo2', o.shoes, 5)}
-    ${s('torso', o.shirt, 15)}
-    <g id="${p}head">
-      <circle r="7.4" fill="${SKIN}"/>
-      ${o.hat || `<path d="M-7.4 -0.5 A7.4 7.4 0 0 1 6.9 -3 Q1 -5 -7.4 -0.5 Z" fill="${o.hair || '#4A3426'}"/>`}
-      <circle cx="4" cy="-1" r="0.9" fill="#0B1017"/>
-      <circle class="cheek" cx="3" cy="2.6" r="2.3" fill="#FF5F52" opacity="0"/>
-    </g>
-    ${s('th', o.pants, 10)}${s('sh', o.leg || SKIN, 7.5)}${s('fo', o.shoes, 5.5)}
-    ${o.extra || ''}
-    ${s('ua', o.shirt, 6.5)}${s('la', SKIN, 5.5)}`;
+/* ------------------------------------------------------------------ *
+ *  People, seen from the side and facing right.
+ *  Limbs are tapered shapes, not lines: thighs wider at the hip, calves
+ *  narrowing to the ankle, hands and shoes, a face in profile with nose,
+ *  eye, brow, ear and hair. Far limbs are a shade darker.
+ * ------------------------------------------------------------------ */
+const PERSON = {};
+
+/** Tapered limb from a (radius ra) to b (radius rb), rounded at both ends. */
+function capsule(a, b, ra, rb) {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const L = Math.hypot(dx, dy) || 0.001;
+  const nx = -dy / L;
+  const ny = dx / L;
+  const p1 = [a[0] + nx * ra, a[1] + ny * ra];
+  const p2 = [b[0] + nx * rb, b[1] + ny * rb];
+  const p3 = [b[0] - nx * rb, b[1] - ny * rb];
+  const p4 = [a[0] - nx * ra, a[1] - ny * ra];
+  return `M${pt(p1)} L${pt(p2)} A${rb} ${rb} 0 0 0 ${pt(p3)} L${pt(p4)} A${ra} ${ra} 0 0 0 ${pt(p1)} Z`;
 }
 
-/** Writes a pose computed by the figure into the person's paths. */
+/** Body from hip to shoulder: straight back, chest and belly in front. */
+function torsoPath(hip, sh, o) {
+  const dx = sh[0] - hip[0];
+  const dy = sh[1] - hip[1];
+  const L = Math.hypot(dx, dy) || 0.001;
+  const u = [dx / L, dy / L];
+  const f = [-u[1], u[0]];          // front
+  const at = (k, side, w) => [hip[0] + u[0] * L * k + f[0] * side * w, hip[1] + u[1] * L * k + f[1] * side * w];
+  const wh = 6.6;
+  const ws = 6.2;
+  const belly = o.belly || 0;
+  return `M${pt(at(0, -1, wh))}`
+    + ` C${pt(at(0.35, -1, wh + 0.4))} ${pt(at(0.75, -1, ws + 1.2))} ${pt(at(1, -1, ws))}`
+    + ` A${ws} ${ws} 0 0 1 ${pt(at(1, 1, ws))}`
+    + ` C${pt(at(0.78, 1, ws + 2.2))} ${pt(at(0.4, 1, wh + 0.6 + belly))} ${pt(at(0, 1, wh))}`
+    + ` A${wh} ${wh} 0 0 1 ${pt(at(0, -1, wh))} Z`;
+}
+
+/** Apron over chest and thighs. */
+function apronPath(hip, sh) {
+  const dx = sh[0] - hip[0];
+  const dy = sh[1] - hip[1];
+  const L = Math.hypot(dx, dy) || 0.001;
+  const u = [dx / L, dy / L];
+  const f = [-u[1], u[0]];
+  const at = (k, w, down = 0) => [hip[0] + u[0] * L * k + f[0] * w - u[0] * down, hip[1] + u[1] * L * k + f[1] * w - u[1] * down];
+  return `M${pt(at(0.82, 2))} L${pt(at(0.82, 7.4))} C${pt(at(0.5, 9.2))} ${pt(at(0.1, 8.8))} ${pt(at(0, 9, 12))}`
+    + ` L${pt(at(0, 5.5, 22))} L${pt(at(0, -1.5, 21))} L${pt(at(0.3, 0.5))} Z`;
+}
+
+const SHOE = 'M-3 -4.5 C-3.2 -7 1.5 -7.2 2.6 -5.6 L8.6 -3.6 C10.2 -3 10.4 -0.4 8.8 0 L-2.6 0 C-3.8 0 -3.6 -2.4 -3 -4.5 Z';
+
+/**
+ * o: shirt, pants, shoes, skin parts, hair, hat, arm [upper, fore],
+ *    longSleeves, longPants, apron, belly, extra (held item, drawn
+ *    between body and near arm).
+ */
+function personSvg(p, o) {
+  PERSON[p] = o;
+  const far = (c) => mix(c, '#0B1017', 0.32);
+  const path = (id, fill) => `<path id="${p}${id}" fill="${fill}"/>`;
+  const upper = o.shirt;
+  const lower = o.longSleeves ? o.shirt : SKIN;
+  const shin = o.longPants ? o.pants : (o.leg || SKIN);
+  const hair = o.hair || '#4A3426';
+  const hat = o.hat || `<path d="M-7.6 1 C-8.4 -6 -4 -9.8 1 -9.4 C5.6 -9.1 8 -6.4 7.7 -3.4 C5 -5.6 1.6 -5.4 -1.2 -4.4 C-2.6 -2.2 -3.4 1 -4.2 3.4 C-6 3.6 -7.4 2.8 -7.6 1 Z" fill="${hair}"/>`;
+  return `
+    <g id="${p}far">
+      ${path('ua2', far(upper))}${path('la2', far(lower))}<circle id="${p}hd2" r="2.5" fill="${SKIN_FAR}"/>
+      ${path('th2', far(o.pants))}${path('sh2', far(shin))}<path id="${p}fo2" d="${SHOE}" fill="${far(o.shoes)}"/>
+    </g>
+    ${path('torso', o.shirt)}
+    <path id="${p}hl" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="2.2" stroke-linecap="round"/>
+    ${o.apron ? path('apron', o.apron) : ''}
+    ${path('neck', SKIN)}
+    <g id="${p}head">
+      <ellipse cx="-0.3" cy="-0.6" rx="7.4" ry="7.9" fill="${SKIN}"/>
+      <ellipse cx="3.6" cy="4.6" rx="4.4" ry="2.8" fill="${SKIN}"/>
+      <path d="M6.6 -2 L9.4 1.6 L6.4 2.6 Z" fill="${SKIN}"/>
+      <ellipse cx="-1.4" cy="0.6" rx="1.6" ry="2.3" fill="${SKIN_FAR}"/>
+      <ellipse cx="4.6" cy="-1.2" rx="0.85" ry="1.1" fill="#0B1017"/>
+      <path d="M3.1 -3.6 L6.3 -3.2" stroke="${hair}" stroke-width="1" stroke-linecap="round"/>
+      <path id="${p}mouth" d="M5 4.6 Q6.2 4.9 7.2 4.3" stroke="#8A4A3A" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+      <circle class="cheek" cx="3.4" cy="2.4" r="2.2" fill="#FF5F52" opacity="0"/>
+      ${hat}
+    </g>
+    ${path('th', o.pants)}${path('sh', shin)}<path id="${p}fo" d="${SHOE}" fill="${o.shoes}"/>
+    ${o.extra || ''}
+    ${path('ua', upper)}${path('la', lower)}<circle id="${p}hd" r="2.6" fill="${SKIN}"/>`;
+}
+
+/** Writes a pose computed by the figure into the person's shapes. */
 function setPerson(el, p, P) {
-  line(el, `${p}torso`, P.hip, P.shoulder);
+  const o = PERSON[p] || {};
+  el(`${p}torso`).setAttribute('d', torsoPath(P.hip, P.shoulder, o));
+  el(`${p}hl`).setAttribute('d', `M${pt(lerpPt(P.hip, P.shoulder, 0.25))} L${pt(lerpPt(P.hip, P.shoulder, 0.85))}`);
+  el(`${p}hl`).setAttribute('transform', 'translate(-3.5 0)');
+  if (o.apron) el(`${p}apron`).setAttribute('d', apronPath(P.hip, P.shoulder));
+  el(`${p}neck`).setAttribute('d', capsule(lerpPt(P.shoulder, P.head, 0.1), lerpPt(P.shoulder, P.head, 0.75), 2.7, 2.5));
   el(`${p}head`).setAttribute('transform', `translate(${pt(P.head)}) rotate(${(P.headTilt || 0).toFixed(1)})`);
+
   const leg = (sfx, foot, knee) => {
-    line(el, `${p}th${sfx}`, P.hip, knee);
-    line(el, `${p}sh${sfx}`, knee, foot);
-    line(el, `${p}fo${sfx}`, [foot[0] - 2, foot[1] - 1], [foot[0] + 6, foot[1]]);
+    const ankle = [foot[0], foot[1] - 3];
+    el(`${p}th${sfx}`).setAttribute('d', capsule(P.hip, knee, 5.6, 4));
+    el(`${p}sh${sfx}`).setAttribute('d', capsule(knee, ankle, 3.9, 2.4));
+    // Shoe: flat on the ground, heel rises behind the body, toe points
+    // down while the foot swings.
+    const lift = -foot[1];
+    let ang = 0;
+    if (lift > 0.6) ang = clamp(deg(Math.atan2(ankle[1] - knee[1], ankle[0] - knee[0])) - 90, -30, 55) * 0.6 + lift * 1.6;
+    else if (foot[0] < P.hip[0] - 7) ang = -clamp((P.hip[0] - 7 - foot[0]) * 1.6, 0, 22);
+    el(`${p}fo${sfx}`).setAttribute('transform', `translate(${pt(foot)}) rotate(${ang.toFixed(1)})`);
   };
-  leg('', P.foot, P.knee);
   leg('2', P.foot2, P.knee2);
-  line(el, `${p}ua`, P.shoulder, P.elbow);
-  line(el, `${p}la`, P.elbow, P.hand);
-  line(el, `${p}ua2`, P.shoulder, P.elbow2);
-  line(el, `${p}la2`, P.elbow2, P.hand2);
+  leg('', P.foot, P.knee);
+
+  const arm = (sfx, elbow, hand) => {
+    el(`${p}ua${sfx}`).setAttribute('d', capsule(P.shoulder, elbow, 3.4, 2.7));
+    el(`${p}la${sfx}`).setAttribute('d', capsule(elbow, hand, 2.7, 2.1));
+    el(`${p}hd${sfx}`).setAttribute('cx', hand[0].toFixed(1));
+    el(`${p}hd${sfx}`).setAttribute('cy', hand[1].toFixed(1));
+  };
+  arm('2', P.elbow2, P.hand2);
+  arm('', P.elbow, P.hand);
+}
+
+/** Running or walking cycle. Foot moves forward in the air, back on the ground. */
+function gaitPose(ph, o) {
+  // In the air the foot swings forward; running lifts the heel high behind.
+  const foot = (a) => {
+    const air = Math.max(0, Math.cos(a));
+    const kick = o.kick ? Math.max(0, Math.sin(a + 0.9)) * Math.max(0, Math.cos(a - 0.6)) * o.kick : 0;
+    return [o.stride * Math.sin(a) - kick * 0.6, -air * o.lift - kick];
+  };
+  const bob = o.bob(ph);
+  const hip = [0, -o.hipY + bob];
+  const shoulder = [o.lean, -o.hipY - 24 + bob];
+  const P = { hip, shoulder, head: [o.lean + 3.5, shoulder[1] - 11], foot: foot(ph), foot2: foot(ph + Math.PI) };
+  P.knee = ik(hip, P.foot, o.thigh, o.shin, 1);
+  P.knee2 = ik(hip, P.foot2, o.thigh, o.shin, 1);
+  const [ua, fa] = o.arm || [14, 13];
+  const arm = (a) => {
+    // Elbow bends more on the forward swing, the forearm lags behind.
+    const swing = o.armSwing * Math.sin(a);
+    const up = Math.PI / 2 + swing;
+    const elbow = polar(shoulder, ua, up);
+    return [elbow, polar(elbow, fa, up - o.elbowBend - Math.max(0, -swing) * 0.5)];
+  };
+  [P.elbow, P.hand] = arm(ph);
+  [P.elbow2, P.hand2] = arm(ph + Math.PI);
+  return P;
 }
 
 /* ------------------------------------------------------------------ *
  *  Reactions to unsuitable weather.
  *  mood = { cold, hot, wind, rain, calm }, each 0 (fine), 0.5 (borderline)
- *  or 1 (unsuitable). Poses are only used at 1, while the figure stands.
+ *  or 1 (unsuitable). Poses are used at 1 while the figure stands, and
+ *  blend in and out smoothly. Only the body moves, never the bike or boat.
  * ------------------------------------------------------------------ */
 function rotAround(p, c, degrees) {
   const a = (degrees * Math.PI) / 180;
@@ -522,6 +639,16 @@ function moodReason(mood) {
   return ['rain', 'cold', 'wind', 'hot'].find((k) => mood[k] >= 1) || null;
 }
 
+/** Slow, irregular motion in about -1..1, used for gusts and sway. */
+function wobble(t, seed = 0) {
+  return (Math.sin(t * 1.3 + seed) + 0.6 * Math.sin(t * 2.7 + seed * 1.9) + 0.35 * Math.sin(t * 4.9 + seed * 0.6)) / 1.95;
+}
+
+/** Fine, uneven shivering in about -1..1. */
+function tremor(t, seed = 0) {
+  return 0.55 * Math.sin(t * 47 + seed) + 0.3 * Math.sin(t * 61 + seed * 2.3) + 0.15 * Math.sin(t * 83 + seed * 0.4);
+}
+
 /** Leans the upper body around the hip (positive = forward, into the wind). */
 function leanPose(P, degrees) {
   ['shoulder', 'head', 'elbow', 'hand', 'elbow2', 'hand2'].forEach((k) => {
@@ -529,53 +656,136 @@ function leanPose(P, degrees) {
   });
 }
 
+/** Fades a reaction in and out over about half a second. */
+function moodBlend(fig, c, active) {
+  const reason = active ? moodReason(c.mood) : null;
+  if (reason) fig.moodLast = reason;
+  fig.moodW = lerp(fig.moodW || 0, reason ? 1 : 0, Math.min(1, c.dt * 2.2));
+  if (fig.moodW < 0.01 && !reason) fig.moodLast = null;
+  return { reason: fig.moodLast || null, w: ease(clamp(fig.moodW, 0, 1)) };
+}
+
 /**
- * Arm and head pose for the reason. keepNear leaves the near arm alone
- * (it holds an umbrella or the handlebar).
+ * Pose for a reason, built from a copy of the normal pose.
+ *   o.arm            [upper arm, forearm] lengths, elbows follow by IK
+ *   o.keepNear/Far   that arm holds something (umbrella, handlebar)
+ *   o.standing       the feet may step on the spot
+ *   o.handsToMouth   blow into the hands instead of rubbing the arms
+ *   o.umbrella       the near hand holds an umbrella
  */
-function moodPose(P, reason, t, keepNear) {
-  if (!reason) return;
-  const sh = P.shoulder;
-  const hd = P.head;
-  const near = (elbow, hand) => { if (!keepNear) { P.elbow = elbow; P.hand = hand; } };
+function reactionPose(P0, reason, t, o) {
+  const P = { ...P0 };
+  const [ua, fa] = o.arm;
+  const setNear = (hand, side) => {
+    if (o.keepNear) return;
+    P.hand = hand;
+    P.elbow = ik(P.shoulder, hand, ua, fa, side);
+  };
+  const setFar = (hand, side) => {
+    if (o.keepFar) return;
+    P.hand2 = hand;
+    P.elbow2 = ik(P.shoulder, hand, ua, fa, side);
+  };
+  const step = (amp, rate) => {
+    if (!o.standing) return;
+    P.foot = [P.foot[0], P.foot[1] - Math.max(0, Math.sin(t * rate)) * amp];
+    P.foot2 = [P.foot2[0], P.foot2[1] - Math.max(0, -Math.sin(t * rate)) * amp];
+  };
+  P.lean = 0;
+  P.headTilt = P0.headTilt || 0;
+
   if (reason === 'cold') {
-    // Arms wrapped around the body, head pulled in.
-    near([sh[0] + 6, sh[1] + 13], [sh[0] - 5, sh[1] + 7]);
-    P.elbow2 = [sh[0] + 4, sh[1] + 14];
-    P.hand2 = [sh[0] - 7, sh[1] + 10];
-    P.head = [hd[0] - 1, hd[1] + 2.5];
-    P.headTilt = 12;
+    // Shoulders drawn up, head sunk in, the upper body shivers finely.
+    const tr = tremor(t) * 0.45;
+    const tr2 = tremor(t, 2) * 0.4;
+    P.lean = 4;
+    P.shoulder = [P.shoulder[0] + tr, P.shoulder[1] - 1.2 + tr2];
+    P.head = [P.head[0] - 0.4 + tr * 0.6, P.head[1] + 1.8 + tr2 * 0.6];
+    P.headTilt = 9;
+    const sh = P.shoulder;
+    const hd = P.head;
+    if (o.handsToMouth) {
+      // Rubs the hands in front of the mouth and breathes into them.
+      const rub = Math.sin(t * 13) * 0.9;
+      setNear([hd[0] + 7.5 + rub, hd[1] + 5.5], -1);
+      setFar([hd[0] + 6.2 - rub, hd[1] + 6.5], -1);
+    } else {
+      // Arms crossed, rubbing the upper arms, stepping from foot to foot.
+      const rub = Math.sin(t * 5.6) * 2.6;
+      setNear([sh[0] - 2.5 + tr, sh[1] + 6 + rub], 1);
+      setFar([sh[0] + 3.5 + tr2, sh[1] + 7 - rub], 1);
+      step(1.8, 4.2);
+    }
   } else if (reason === 'rain') {
-    // Hands held over the head, ducking.
-    near([sh[0] + 11, sh[1] - 5], [hd[0] + 2, hd[1] - 8]);
-    P.elbow2 = [sh[0] - 8, sh[1] - 6];
-    P.hand2 = [hd[0] - 4, hd[1] - 8.5];
-    P.head = [hd[0] + 1, hd[1] + 2.5];
+    // Head down, shoulders up, hands held over the head like a roof.
+    P.head = [P.head[0] + 1, P.head[1] + 2.2];
     P.headTilt = 14;
+    const sh = P.shoulder;
+    const hd = P.head;
+    if (o.umbrella) {
+      setFar([sh[0] + 4, sh[1] + 9], 1);
+    } else {
+      P.lean = 6;
+      setNear([hd[0] + 3, hd[1] - 7.5], -1);
+      setFar([hd[0] - 4, hd[1] - 8], 1);
+    }
+    step(2.2, 7);
   } else if (reason === 'wind') {
-    // Shields the face, far arm out for balance.
-    near([sh[0] + 12, sh[1] + 5], [hd[0] + 9, hd[1] + 1]);
-    P.elbow2 = [sh[0] - 8, sh[1] + 11];
-    P.hand2 = [sh[0] - 15, sh[1] + 21];
-    P.headTilt = 10;
+    // Leans into the gusts, shields the eyes, wide stance.
+    const g = 0.5 + 0.5 * wobble(t * 1.1, 1);
+    P.lean = 5 + 7 * g;
+    P.headTilt = 11;
+    const sh = P.shoulder;
+    const hd = P.head;
+    setNear([hd[0] + 8.5, hd[1] - 0.5 + wobble(t * 3, 4) * 0.8], -1);
+    setFar([sh[0] - 10 - 4 * g, sh[1] + 21], 1);
+    if (o.standing) {
+      P.foot = [P.foot[0] + 5, P.foot[1]];
+      P.foot2 = [P.foot2[0] - 6, P.foot2[1]];
+    }
   } else if (reason === 'hot') {
-    // Wipes the forehead now and then, far arm hangs limp.
-    const cyc = (t % 2.6) / 2.6;
-    const wipe = cyc < 0.5 ? Math.sin(cyc * 2 * Math.PI * 2) : 0;
-    near([sh[0] + 13, sh[1] + 1], [hd[0] + 7 - Math.abs(wipe) * 9, hd[1] - 3.5]);
-    P.elbow2 = [sh[0] - 1, sh[1] + 14];
-    P.hand2 = [sh[0] + 1, sh[1] + 27];
-    P.head = [hd[0], hd[1] + Math.sin(t * 9) * 0.6];
-    P.headTilt = -8;
+    // Heavy breathing, wipes the forehead once, then fans some air.
+    const breathe = Math.sin(t * 2.4) * 0.6;
+    P.lean = 2;
+    P.shoulder = [P.shoulder[0], P.shoulder[1] + 1 + breathe];
+    P.head = [P.head[0], P.head[1] + 1.2 + breathe];
+    P.headTilt = 6;
+    const sh = P.shoulder;
+    const hd = P.head;
+    const tau = t % 5;
+    const fan = tau > 2.2 ? Math.sin((tau - 2.2) * 12) * 3.2 : 0;
+    const hand = keyed([
+      [0, [hd[0] + 11, hd[1] + 7]],
+      [0.7, [hd[0] + 8, hd[1] - 4]],
+      [1.5, [hd[0] - 2.5, hd[1] - 5]],
+      [2.2, [hd[0] + 11, hd[1] + 6]],
+      [5, [hd[0] + 11, hd[1] + 7]],
+    ], tau, lerpPt);
+    setNear([hand[0], hand[1] + fan], -1);
+    setFar([sh[0] + 1.5, sh[1] + 25], -1);
+  }
+  if (P.lean) leanPose(P, P.lean);
+  return P;
+}
+
+/** Mixes the reaction pose R into the normal pose P by weight w. */
+function blendPose(P, R, w, legs) {
+  ['shoulder', 'head', 'elbow', 'hand', 'elbow2', 'hand2', 'foot', 'foot2'].forEach((k) => {
+    if (R[k] && P[k]) P[k] = lerpPt(P[k], R[k], w);
+  });
+  P.headTilt = lerp(P.headTilt || 0, R.headTilt || 0, w);
+  if (legs) {
+    P.knee = ik(P.hip, P.foot, legs[0], legs[1], 1);
+    P.knee2 = ik(P.hip, P.foot2, legs[0], legs[1], 1);
   }
 }
 
-/** Applies lean and pose for a standing person. */
-function moodPerson(P, c, keepNear) {
-  const reason = c.pace < 0.3 ? moodReason(c.mood) : null;
-  if (reason === 'wind') leanPose(P, 9);
-  if (reason === 'rain' || reason === 'cold') leanPose(P, 4);
-  moodPose(P, reason, c.t, keepNear);
+/** Reaction for a standing person (runner, walker, player, cook). */
+function personMood(fig, P, c, o) {
+  const { reason, w } = moodBlend(fig, c, c.pace < 0.3);
+  fig.moodShown = w;
+  if (!reason || w <= 0.001) return;
+  blendPose(P, reactionPose(P, reason, c.t, o), w, o.legs);
 }
 
 /** Red cheeks when cold or hot. */
@@ -583,25 +793,6 @@ function cheeks(root, c) {
   const m = c.mood || {};
   const v = Math.max(m.hot || 0, (m.cold || 0) * 0.7);
   root.querySelectorAll('.cheek').forEach((e) => e.setAttribute('opacity', (v * 0.6).toFixed(2)));
-}
-
-/** Running or walking cycle. Foot moves forward in the air, back on the ground. */
-function gaitPose(ph, o) {
-  const foot = (a) => [o.stride * Math.sin(a), -Math.max(0, Math.cos(a)) * o.lift];
-  const bob = o.bob(ph);
-  const hip = [0, -o.hipY + bob];
-  const shoulder = [o.lean, -o.hipY - 24 + bob];
-  const P = { hip, shoulder, head: [o.lean + 3.5, shoulder[1] - 10.5], foot: foot(ph), foot2: foot(ph + Math.PI) };
-  P.knee = ik(hip, P.foot, o.thigh, o.shin, 1);
-  P.knee2 = ik(hip, P.foot2, o.thigh, o.shin, 1);
-  const arm = (swing) => {
-    const a = Math.PI / 2 + swing;
-    const elbow = polar(shoulder, 14, a);
-    return [elbow, polar(elbow, 13, a - o.elbowBend)];
-  };
-  [P.elbow, P.hand] = arm(o.armSwing * Math.sin(ph));
-  [P.elbow2, P.hand2] = arm(-o.armSwing * Math.sin(ph));
-  return P;
 }
 
 function wheelSvg(id, x) {
@@ -678,11 +869,14 @@ const FIGURES = {
       // When the bike stops the rider slides forward and puts a foot down.
       const stop = 1 - Math.min(1, c.pace * 3);
       const bob = Math.sin(crank * 2) * 0.7 * Math.min(1, c.pace * 2);
-      const reason = stop > 0.5 ? moodReason(c.mood) : null;
-      const lean = reason === 'wind' ? 8 : reason === 'rain' || reason === 'cold' ? 4 : 0;
-      const rotA = -12 * stop + lean;
-      const dx = 10 * stop;
-      const dy = 9 * stop + bob;
+      const { reason, w } = moodBlend(this, c, stop > 0.5);
+      const gust = 0.5 + 0.5 * wobble(c.t * 1.1, 1);
+      const lean = { wind: 4 + 5 * gust, rain: 5, cold: 3, hot: 2 }[reason] || 0;
+      // Shivering moves only the rider's upper body, never the bike.
+      const shiver = reason === 'cold' ? tremor(c.t) * 0.35 * w : 0;
+      const rotA = -12 * stop + lean * w;
+      const dx = 10 * stop + shiver;
+      const dy = 9 * stop + bob + (reason === 'cold' ? tremor(c.t, 2) * 0.25 * w : 0);
       el('f-body').setAttribute('transform', `translate(${dx.toFixed(2)} ${dy.toFixed(2)}) rotate(${rotA.toFixed(2)} -9 -44)`);
       const tp = (q) => { const r = rotAround(q, [-9, -44], rotA); return [r[0] + dx, r[1] + dy]; };
       const hip = tp([-8, -43]);
@@ -705,8 +899,18 @@ const FIGURES = {
       const s2 = [shoulder[0] - 3, shoulder[1]];
       P.hand2 = [37, -37];
       P.elbow2 = ik(s2, P.hand2, 17, 17, -1);
-      // Reaction poses use the arms; the head stays in the body group.
-      moodPose(P, reason, c.t, false);
+      // Reactions use the arms; head and torso stay in the body group.
+      if (reason && w > 0.001) {
+        const hold = reason === 'wind';
+        const R = reactionPose({ ...P, hip, foot: [0, 0], foot2: [0, 0] }, reason, c.t, {
+          arm: [17, 17], handsToMouth: true, keepNear: hold, keepFar: hold || reason === 'hot',
+        });
+        // The body group already leans, so only the arms are taken over.
+        ['elbow', 'hand', 'elbow2', 'hand2'].forEach((k) => {
+          const q = R.lean ? rotAround(R[k], hip, -R.lean) : R[k];
+          P[k] = lerpPt(P[k], q, w);
+        });
+      }
       line(el, 'f-arm', shoulder, P.elbow);
       line(el, 'f-fore', P.elbow, P.hand);
       el('f-arm2').setAttribute('d', `M${pt(s2)} L${pt(P.elbow2)} L${pt(P.hand2)}`);
@@ -733,10 +937,10 @@ const FIGURES = {
       const ph = c.dist / 16;
       const k = Math.min(1, c.pace * 1.6);
       const P = gaitPose(ph, {
-        stride: 6 + 10 * k, lift: 3 + 9 * k, hipY: 44, lean: 4 + 4 * k, thigh: 22, shin: 23,
+        stride: 6 + 10 * k, lift: 3 + 7 * k, kick: 9 * k, hipY: 44, lean: 4 + 4 * k, thigh: 22, shin: 23,
         bob: (a) => -Math.abs(Math.cos(a)) * 2.4 * k, armSwing: 0.25 + 0.6 * k, elbowBend: 1.25 + 0.4 * k,
       });
-      moodPerson(P, c, false);
+      personMood(this, P, c, { arm: [14, 13], legs: [22, 23], standing: true });
       setPerson(el, 'r-', P);
       cheeks(this.root, c);
       this.head = P.head;
@@ -777,7 +981,7 @@ const FIGURES = {
         // Storm turns the umbrella inside out.
         el('umb-c').setAttribute('transform', storm ? `translate(0 ${(-60 + Math.sin(c.t * 13) * 1.5).toFixed(1)}) scale(1 -1)` : '');
       }
-      moodPerson(P, c, umbrella);
+      personMood(this, P, c, { arm: [14, 13], legs: [22, 23.5], standing: true, keepNear: umbrella, umbrella });
       setPerson(el, 'w-', P);
       cheeks(this.root, c);
       this.head = P.head;
@@ -935,7 +1139,7 @@ const FIGURES = {
       P.hand = polar(P.elbow, 13, Math.PI / 2 - sw - 0.5);
       P.elbow2 = polar(shoulder, 14, Math.PI / 2 + sw * 0.8);
       P.hand2 = polar(P.elbow2, 13, Math.PI / 2 + sw * 0.8 - 0.5);
-      moodPerson(P, c, false);
+      personMood(this, P, c, { arm: [14, 13], legs: [22, 23], standing: true });
       setPerson(el, 'k-', P);
       cheeks(this.root, c);
       this.head = P.head;
@@ -972,96 +1176,372 @@ const FIGURES = {
     },
   },
 
-  /* ---------------- Grilling ---------------- */
+  /* ---------------- Grilling ----------------
+   * A whole grilling round, about 37 seconds at full pace:
+   * take the lid off and put it on the table, lay three steaks on the
+   * grate one by one, let them sizzle, turn them, serve them back onto
+   * the plate and put the lid back on. Flames flare up when meat meets
+   * the grate or is turned, the steaks brown and get grill marks.
+   */
   bbq: {
     env: 'garden',
-    anchor: [300, 236],
+    anchor: [292, 236],
     scale: 1.3,
     speed: 1,
-    mouth: [-62, -80],
-    shadow: [0, 40],
+    mouth: [-6, -78],
+    shadow: [6, 52],
     build() {
-      const flames = [-16, -6, 4, 14].map((x, i) => `<path class="flame" id="fl${i}" d="M0 0 Q-4 -6 0 -14 Q4 -6 0 0 Z" transform="translate(${x} -40)"/>`).join('');
-      const smoke = Array.from({ length: 8 }, (_, i) => `<circle class="smoke" id="sm${i}" r="4"/>`).join('');
+      const bars = Array.from({ length: 12 }, (_, i) => `M${9 + i * 3} -56 V-43`).join(' ');
+      const flames = Array.from({ length: 8 }, (_, i) => `<path class="flame" id="fl${i}" d="M0 0 C-3 -3 -2.5 -7 0 -11 C2.5 -7 3 -3 0 0 Z"/>`).join('');
+      const embers = Array.from({ length: 9 }, (_, i) => `<circle id="em${i}" cx="${(11 + i * 3.6).toFixed(1)}" cy="${(-46.5 + (i % 3) - 1).toFixed(1)}" r="${(1.2 + (i % 2) * 0.6).toFixed(1)}" fill="#FF7A1A"/>`).join('');
+      const smoke = Array.from({ length: 14 }, (_, i) => `<circle class="smoke" id="sm${i}" r="4"/>`).join('');
+      const sparks = Array.from({ length: 8 }, (_, i) => `<circle class="spark" id="sp${i}" r="0.8"/>`).join('');
+      const steak = (i) => `
+        <g id="st${i}">
+          <g id="st${i}-f">
+            <path id="st${i}-b" d="M-7 -1 C-7.4 -4.4 -2 -5 2 -4.6 C6.2 -4.2 8.4 -2.4 7.4 0.6 C6.4 3.4 0.4 3.8 -3 3.3 C-6.2 2.9 -6.8 1.6 -7 -1 Z" fill="#C2403A"/>
+            <path d="M-6.2 -1.6 C-5.6 -3.6 -1 -4 2 -3.8" stroke="#F3D3C4" stroke-width="1.1" fill="none" stroke-linecap="round" id="st${i}-fat"/>
+            <path id="st${i}-m" d="M-4 2.4 L-1.4 -3.6 M-0.6 2.8 L2 -3.6 M2.8 2.6 L5.2 -2.6" stroke="#2A140C" stroke-width="1.2" stroke-linecap="round" opacity="0"/>
+          </g>
+          <path d="M-7.2 -0.4 C-7 2.6 -3 4 0 4 C4 4 7 2.8 7.4 0.8 L7.4 2.2 C6.6 4.4 2.6 5.2 -0.4 5.2 C-4 5.2 -7.2 3.6 -7.2 1.2 Z" fill="#8E2E28" id="st${i}-edge"/>
+        </g>`;
       return `
-        ${personSvg('c-', {
-    shirt: '#E8EDF4', shirtFar: '#A9B8C9', pants: '#2A3445', pantsFar: '#1C2430', shoes: '#0B1017',
-    leg: '#2A3445', legFar: '#1C2430',
-    hat: '<path d="M-6.5 -4 V-9 a4 4 0 0 1 3 -6 a4.5 4.5 0 0 1 7 0 a4 4 0 0 1 3 6 V-4 Z" fill="#F2F6FB" stroke="#C3D0E0" stroke-width="0.8"/>',
-    extra: '<path id="tongs" stroke="#A9B8C9" stroke-width="2.2" stroke-linecap="round" fill="none"/>',
-  })}
-        <path d="M-74 -46 H-56 V-20 Q-65 -16 -74 -20 Z" fill="#FF5F52" opacity="0.9" id="apron"/>
+        <defs>
+          <clipPath id="grate-clip"><ellipse cx="26" cy="-49" rx="18" ry="4.6"/></clipPath>
+          <clipPath id="fire-clip"><rect x="7" y="-90" width="38" height="43"/></clipPath>
+          <radialGradient id="coal-g"><stop offset="0" stop-color="#FFB020"/><stop offset="0.6" stop-color="#C2410C"/><stop offset="1" stop-color="#2A1408"/></radialGradient>
+          <linearGradient id="bowl-g" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#2E3848"/><stop offset="0.45" stop-color="#3A4658"/><stop offset="1" stop-color="#1F2733"/>
+          </linearGradient>
+        </defs>
+        <!-- side table with the plate -->
+        <path d="M-86 -46 H-28 M-83 -46 L-84 0 M-31 -46 L-30 0 M-84 -22 H-30" stroke="#6B5240" stroke-width="2.6" stroke-linecap="round"/>
+        <rect x="-88" y="-48.5" width="62" height="3" rx="1.2" fill="#8A6A50"/>
+        <ellipse cx="-36" cy="-49" rx="9" ry="2.4" fill="#F2F6FB"/>
+        <ellipse cx="-36" cy="-49.3" rx="6" ry="1.4" fill="#DDE4EE"/>
+
+        <!-- grill: legs, ash pan, bowl -->
+        <path d="M13 -36 L4 0 M39 -36 L48 0 M26 -31 V0" stroke="#2A3445" stroke-width="2.6" stroke-linecap="round"/>
+        <ellipse cx="26" cy="-14" rx="13" ry="2.4" fill="none" stroke="#3A4658" stroke-width="1.6"/>
+        <circle cx="48" cy="-1" r="3.2" fill="#0B1017"/>
+        <path d="M6 -48 A20 18 0 0 0 46 -48 Z" fill="url(#bowl-g)"/>
+        <path d="M9 -42 A18 13 0 0 0 20 -33" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <ellipse cx="26" cy="-48" rx="20" ry="5.6" fill="#141A22"/>
+        <ellipse id="coals" cx="26" cy="-46.6" rx="17" ry="3.8" fill="url(#coal-g)" opacity="0.4"/>
+        <g id="embers">${embers}</g>
+        <g clip-path="url(#grate-clip)"><path d="${bars}" stroke="#7E8CA0" stroke-width="0.9"/></g>
+        <ellipse cx="26" cy="-49" rx="18" ry="4.6" fill="none" stroke="#7E8CA0" stroke-width="1"/>
+        <ellipse cx="26" cy="-48" rx="20" ry="5.6" fill="none" stroke="#55657F" stroke-width="1.6"/>
+        <g clip-path="url(#fire-clip)"><g id="flames">${flames}</g></g>
+        ${steak(0)}${steak(1)}${steak(2)}
+        <g id="sparks">${sparks}</g>
         <g id="smokes">${smoke}</g>
-        <path d="M-18 -22 L-27 0 M18 -22 L27 0 M0 -16 V0" stroke="#2A3445" stroke-width="3" stroke-linecap="round"/>
-        <circle cx="27" cy="0" r="3.5" fill="#0B1017"/>
-        <ellipse id="coals" cx="0" cy="-36" rx="24" ry="4" fill="#FF7A1A" opacity="0.6"/>
-        <g id="flames">${flames}</g>
-        <path d="M-30 -40 H30 A30 24 0 0 1 -30 -40 Z" fill="#1F2733" stroke="#3A4658" stroke-width="1.5"/>
-        <path d="M-28 -41 H28" stroke="#7E8CA0" stroke-width="1.6"/>
-        <g id="sausages">
-          <rect id="sg0" x="-20" y="-47" width="12" height="5.5" rx="2.75" fill="#B5532F"/>
-          <rect id="sg1" x="-5" y="-47" width="12" height="5.5" rx="2.75" fill="#A84A2A"/>
-          <rect id="sg2" x="10" y="-47" width="12" height="5.5" rx="2.75" fill="#B5532F"/>
+
+        <!-- cook -->
+        <g id="cook">
+          ${personSvg('c-', {
+    shirt: '#E8EDF4', pants: '#2A3445', shoes: '#0B1017', longSleeves: true, longPants: true,
+    apron: '#FF7A1A', belly: 1.6, hair: '#5A4030',
+    hat: '<path d="M-6.8 -5.6 V-10.5 C-9.6 -11.5 -9.2 -16.6 -5.4 -16 C-4.6 -19.6 1 -20 2.4 -16.6 C6 -17.8 8.2 -13 5.6 -10.5 V-5.6 Z" fill="#F2F6FB"/><path d="M-6.8 -6.2 H5.6" stroke="#C3D0E0" stroke-width="1.6"/>',
+    extra: '<g id="tongs"><path id="tg1" stroke="#C3D0E0" stroke-width="1.5" stroke-linecap="round" fill="none"/><path id="tg2" stroke="#A9B8C9" stroke-width="1.5" stroke-linecap="round" fill="none"/></g>',
+  })}
         </g>
+
+        <!-- lid, drawn last: it is carried in front -->
         <g id="lid">
-          <path d="M-30 -40 A30 24 0 0 1 30 -40 Z" fill="#2A3445" stroke="#3A4658" stroke-width="1.5"/>
-          <path d="M-5 -63 H5" stroke="#A9B8C9" stroke-width="3" stroke-linecap="round"/>
+          <path d="M-20 0 A20 15 0 0 1 20 0 Z" fill="#2A3445"/>
+          <path d="M-15 -6 A17 12 0 0 1 2 -14" stroke="#FFFFFF" stroke-opacity="0.15" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <path d="M-20.5 0 H20.5" stroke="#55657F" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M-4 -14.6 V-17.6 M4 -14.6 V-17.6" stroke="#7E8CA0" stroke-width="1.4"/>
+          <path d="M-5.5 -18 H5.5" stroke="#4A3828" stroke-width="3" stroke-linecap="round"/>
+          <path id="vent-smoke-anchor" d="M8 -12 h3" stroke="#7E8CA0" stroke-width="1.4"/>
         </g>`;
     },
-    update(el, c) {
-      if (!this.smoke) {
-        this.smoke = Array.from({ length: 8 }, (_, i) => ({ el: el(`sm${i}`), age: i / 8, x: 0 }));
-        this.lid = 0;
-      }
-      const t = c.t;
-      const open = c.pace > 0.02;
-      // Lid swings open when grilling is on, stays shut otherwise.
-      this.lid += ((open ? 1 : 0) - this.lid) * Math.min(1, c.dt * 2);
-      el('lid').setAttribute('transform', `rotate(${(this.lid * 118).toFixed(1)} 30 -40)`);
-      const heat = c.pace * this.lid;
-      for (let i = 0; i < 4; i += 1) {
-        const f = el(`fl${i}`);
-        const s = 0.55 + 0.45 * Math.abs(Math.sin(t * (7 + i) + i * 1.7));
-        f.setAttribute('transform', `translate(${-16 + i * 10} -40) scale(${(0.8 + 0.2 * Math.sin(t * 9 + i)).toFixed(2)} ${(s * heat).toFixed(2)})`);
-      }
-      el('coals').setAttribute('opacity', (0.15 + heat * (0.45 + 0.15 * Math.sin(t * 5))).toFixed(2));
-      // Sausages sizzle; the middle one gets turned now and then.
-      const flip = (t * c.pace * 0.5) % 1;
-      el('sg1').setAttribute('transform', flip < 0.15 && open ? `translate(0 ${(-Math.sin((flip / 0.15) * Math.PI) * 6).toFixed(1)})` : '');
-      ['sg0', 'sg2'].forEach((id, i) => el(id).setAttribute('transform', `translate(0 ${(Math.sin(t * 23 + i) * 0.3 * heat).toFixed(2)})`));
-      // Smoke rises and is carried off by the wind.
-      const wind = clamp(c.look.wind, 0, 60);
-      this.smoke.forEach((p) => {
-        p.age += c.dt / 2.4;
-        if (p.age >= 1) { p.age -= 1; p.x = rnd(-10, 10); }
-        const a = p.age;
-        const x = p.x - a * (8 + wind * 1.6) + Math.sin(a * 6 + p.x) * 3;
-        const y = -50 - a * (60 - wind * 0.6);
-        p.el.setAttribute('cx', x.toFixed(1));
-        p.el.setAttribute('cy', y.toFixed(1));
-        p.el.setAttribute('r', (3 + a * 10).toFixed(1));
-        p.el.style.opacity = (0.5 * heat * Math.sin(a * Math.PI)).toFixed(2);
+
+    init() {
+      const COOK_X = -14;
+      const STACK = [[-36, -50.2], [-36, -52.6], [-36, -55]];
+      const SPOT = [[16, -50.2], [26, -50.8], [36, -50.2]];
+      const LID_CLOSED = [26, -48];
+      const LID_TABLE = [-64, -48.5];
+      const HANDLE = -18;
+      // Tongs reach 10 forward and 8 down from the hand.
+      const tipHand = (tip, face) => [tip[0] - 10 * face, tip[1] - 8];
+      const K = [];
+      let now = 0;
+      let x = COOK_X;
+      const key = (dt, hnd, face, mode) => { now += dt; K.push({ t: now, hand: hnd, face, mode, x }); };
+      const tip = (dt, p, face) => key(dt, tipHand(p, face), face, 'tip');
+      const hand = (dt, p, face) => key(dt, p, face, 'hand');
+      const stepTo = (nx) => { x = nx; };
+      const up = (p, d) => [p[0], p[1] - d];
+      const E = {};
+
+      tip(0, [12, -42], 1);
+      tip(0.8, [12, -42], 1);
+      // Lid off, onto the table.
+      hand(1.0, up(LID_CLOSED, -HANDLE), 1);
+      hand(0.3, up(LID_CLOSED, -HANDLE), 1); E.lidOff = now;
+      hand(0.9, [22, -84], 1);
+      hand(0.7, [-12, -78], -1);
+      stepTo(-30);
+      hand(1.0, up(LID_TABLE, -HANDLE), -1); E.lidDown = now;
+      stepTo(COOK_X);
+      hand(0.7, [-30, -62], -1);
+      // Three steaks from the plate onto the grate (top of the stack first).
+      E.grab = []; E.place = [];
+      [2, 1, 0].forEach((s, i) => {
+        tip(0.6, up(STACK[s], 3), -1);
+        tip(0.25, STACK[s], -1); E.grab[i] = now; E.stack = E.stack || []; E.stack[i] = s;
+        tip(0.45, up(STACK[s], 12), -1);
+        tip(0.55, [-6, -56], 1);
+        tip(0.7, up(SPOT[i], 4), 1);
+        tip(0.3, SPOT[i], 1); E.place[i] = now;
+        tip(0.35, up(SPOT[i], 8), 1);
+        if (i < 2) tip(0.45, [-22, -56], -1);
       });
-      // Cook stands left of the grill and works the tongs.
-      const work = open ? Math.max(0, Math.sin(t * 2.2 * Math.max(0.3, c.pace))) : 0;
-      const hip = [-68, -44];
-      const shoulder = [-66, -68];
-      const P = {
-        hip, shoulder, head: [-63, -78.5], foot: [-60, 0], foot2: [-72, 0],
-        headTilt: 8,
+      // Sizzle.
+      tip(0.6, [14, -42], 1);
+      tip(2.2, [14, -42], 1);
+      // Turn each steak.
+      E.flip0 = []; E.flip1 = [];
+      [0, 1, 2].forEach((i) => {
+        tip(0.4, up(SPOT[i], 2), 1);
+        tip(0.15, SPOT[i], 1); E.flip0[i] = now;
+        tip(0.35, up(SPOT[i], 10), 1);
+        tip(0.3, up(SPOT[i], 4), 1);
+        tip(0.2, SPOT[i], 1); E.flip1[i] = now;
+        tip(0.25, up(SPOT[i], 6), 1);
+      });
+      tip(0.5, [14, -42], 1);
+      tip(2.2, [14, -42], 1);
+      // Serve onto the plate.
+      E.serve0 = []; E.serve1 = [];
+      [0, 1, 2].forEach((i) => {
+        tip(0.4, up(SPOT[i], 2), 1);
+        tip(0.15, SPOT[i], 1); E.serve0[i] = now;
+        tip(0.4, up(SPOT[i], 12), 1);
+        tip(0.55, [-24, -58], -1);
+        tip(0.45, up(STACK[i], 3), -1);
+        tip(0.2, STACK[i], -1); E.serve1[i] = now;
+        tip(0.3, up(STACK[i], 9), -1);
+        if (i < 2) tip(0.5, [-4, -56], 1);
+      });
+      // Lid back on.
+      stepTo(-30);
+      hand(0.8, up(LID_TABLE, -HANDLE), -1);
+      hand(0.25, up(LID_TABLE, -HANDLE), -1); E.lidUp = now;
+      hand(0.6, [-58, -80], -1);
+      stepTo(COOK_X);
+      hand(0.9, [0, -82], 1);
+      hand(0.8, up(LID_CLOSED, -HANDLE + 3), 1);
+      hand(0.3, up(LID_CLOSED, -HANDLE), 1); E.lidOn = now;
+      tip(0.6, [12, -42], 1);
+      tip(1.6, [12, -42], 1);
+
+      this.S = { COOK_X, STACK, SPOT, LID_CLOSED, LID_TABLE, HANDLE, K, E, T: now };
+      this.smoke = null;
+    },
+
+    /** Hand position, facing and tool mode at loop time tau. */
+    _key(tau) {
+      const K = this.S.K;
+      let i = 1;
+      while (i < K.length - 1 && K[i].t < tau) i += 1;
+      const a = K[i - 1];
+      const b = K[i];
+      const f = b.t > a.t ? ease(clamp((tau - a.t) / (b.t - a.t), 0, 1)) : 1;
+      const raw = b.t > a.t ? clamp((tau - a.t) / (b.t - a.t), 0, 1) : 1;
+      return {
+        hand: lerpPt(a.hand, b.hand, f), face: lerp(a.face, b.face, f), mode: f < 0.5 ? a.mode : b.mode,
+        x: lerp(a.x, b.x, f), stepping: a.x !== b.x ? raw : -1,
       };
+    },
+
+    update(el, c) {
+      const S = this.S;
+      const E = S.E;
+      const t = c.t;
+      const active = c.pace > 0.02;
+      // Story time runs with the pace; it rests at the start when it is a no.
+      this.tau = active ? (c.dist % S.T) : 0;
+      const tau = this.tau;
+      const k = active ? this._key(tau) : { hand: [-2, -50], face: 1, mode: 'tip', x: S.COOK_X, stepping: -1 };
+
+      // ----- cook -----
+      const face = k.face;
+      const vis = face >= 0 ? Math.max(0.6, face) : Math.min(-0.6, face);
+      const sign = face >= 0 ? 1 : -1;
+      el('cook').setAttribute('transform', `translate(${k.x.toFixed(2)} 0) scale(${vis.toFixed(3)} 1)`);
+      const local = (w) => [(w[0] - k.x) / vis, w[1]];
+      const handL = local(k.hand);
+      const hip = [0, -44];
+      const reach = handL[0];
+      const lean = clamp((reach - 15) * 0.95, -4, 26) + Math.sin(t * 1.1) * 0.8;
+      const P = {
+        hip,
+        shoulder: rotAround([2, -68], hip, lean),
+        head: rotAround([5.5, -79.5], hip, lean),
+        foot: [6 + Math.max(0, lean - 12) * 0.3, 0],
+        foot2: [-5, 0],
+      };
+      if (k.stepping >= 0) {
+        // Lead foot first, then the other one follows.
+        const s1 = Math.sin(clamp(k.stepping * 2, 0, 1) * Math.PI);
+        const s2 = Math.sin(clamp(k.stepping * 2 - 1, 0, 1) * Math.PI);
+        P.foot = [P.foot[0] + s1 * 4, -s1 * 4];
+        P.foot2 = [P.foot2[0] + s2 * 3, -s2 * 3.5];
+        P.hip = [0, -44 - (s1 + s2) * 0.8];
+      }
       P.knee = ik(hip, P.foot, 22, 23, 1);
       P.knee2 = ik(hip, P.foot2, 22, 23, 1);
-      P.elbow = [-56, -56 - work * 3];
-      P.hand = [-44, -54 - work * 8];
-      P.elbow2 = [-70, -54];
-      P.hand2 = [-64, -46];
-      moodPerson(P, c, false);
+      const look = Math.atan2(handL[1] + 8 - P.head[1], handL[0] - P.head[0]);
+      P.headTilt = clamp(deg(look) * 0.55, -14, 26);
+      P.hand = handL;
+      P.elbow = ik(P.shoulder, P.hand, 16, 15, -1);
+      // Free hand: on the hip while working, steadies the lid when carrying it.
+      if (k.mode === 'hand' && active) {
+        P.hand2 = [handL[0] - 9, handL[1] + 6];
+      } else {
+        P.hand2 = rotAround([-3, -45], hip, lean * 0.5);
+      }
+      P.elbow2 = ik(P.shoulder, P.hand2, 16, 15, active && k.mode === 'hand' ? -1 : 1);
+      personMood(this, P, c, { arm: [16, 15], legs: [22, 23], standing: true });
       setPerson(el, 'c-', P);
       cheeks(this.root, c);
-      this.head = P.head;
-      if (moodReason(c.mood) && c.pace < 0.3) el('tongs').setAttribute('d', '');
-      else line(el, 'tongs', P.hand, [-14, -50 - work * 6]);
+      this.head = [k.x + P.head[0] * vis, P.head[1]];
+
+      // Tongs: closed while holding meat, slightly open otherwise.
+      const tipW = k.mode === 'tip' || !active ? [k.hand[0] + 10 * face, k.hand[1] + 8] : [k.hand[0] + 2 * face, k.hand[1] + 12];
+      const tipL = local(tipW);
+      const holding = this._holding;
+      const jaw = holding ? 0.4 : 1.6;
+      const dir = Math.atan2(tipL[1] - P.hand[1], tipL[0] - P.hand[0]);
+      const nrm = [-Math.sin(dir), Math.cos(dir)];
+      el('tg1').setAttribute('d', `M${pt(P.hand)} L${pt([tipL[0] + nrm[0] * jaw, tipL[1] + nrm[1] * jaw])}`);
+      el('tg2').setAttribute('d', `M${pt(P.hand)} L${pt([tipL[0] - nrm[0] * jaw, tipL[1] - nrm[1] * jaw])}`);
+      if ((this.moodShown || 0) > 0.3) { el('tg1').setAttribute('d', ''); el('tg2').setAttribute('d', ''); }
+
+      // ----- lid -----
+      const inWindow = (a, b) => active && tau >= a && tau < b;
+      let lidPos = S.LID_CLOSED;
+      let lidRot = 0;
+      if (inWindow(E.lidOff, E.lidDown) || inWindow(E.lidUp, E.lidOn)) {
+        lidPos = [k.hand[0], k.hand[1] - S.HANDLE];
+        lidRot = Math.sin(clamp((tau - E.lidOff) / 2, 0, 1) * Math.PI) * -6 * sign;
+      } else if (inWindow(E.lidDown, E.lidUp)) {
+        lidPos = S.LID_TABLE;
+      }
+      el('lid').setAttribute('transform', `translate(${pt(lidPos)}) rotate(${lidRot.toFixed(1)} 0 -18)`);
+      const lidOpen = active && tau > E.lidOff + 0.4 && tau < E.lidOn - 0.2 ? 1 : 0;
+      this.lidOpen = lerp(this.lidOpen || 0, lidOpen, Math.min(1, c.dt * 3));
+
+      // ----- steaks -----
+      this._holding = false;
+      let onGrill = 0;
+      let flare = 0;
+      const since = (te) => (active && tau >= te ? Math.exp(-(tau - te) * 2.2) : 0);
+      for (let i = 0; i < 3; i += 1) {
+        const s = E.stack[i];
+        let pos = S.STACK[s];
+        let flip = 1;
+        let rot = 0;
+        let top = 'raw';
+        let state = 'plate';
+        if (active) {
+          if (tau >= E.grab[i] && tau < E.place[i]) state = 'tongs';
+          else if (tau >= E.place[i] && tau < E.flip0[i]) state = 'grill';
+          else if (tau >= E.flip0[i] && tau < E.flip1[i]) state = 'flip';
+          else if (tau >= E.flip1[i] && tau < E.serve0[i]) state = 'grill2';
+          else if (tau >= E.serve0[i] && tau < E.serve1[i]) state = 'served';
+          else if (tau >= E.serve1[i]) state = 'done';
+        }
+        const tipNow = tipW;
+        if (state === 'tongs' || state === 'served') { pos = tipNow; rot = -12 * sign; this._holding = true; }
+        if (state === 'grill' || state === 'grill2') { pos = S.SPOT[i]; onGrill += 1; }
+        if (state === 'flip') {
+          const f = (tau - E.flip0[i]) / (E.flip1[i] - E.flip0[i]);
+          pos = tipNow;
+          flip = Math.cos(f * Math.PI);
+          this._holding = true;
+          top = f < 0.5 ? 'raw' : 'cooked';
+        }
+        if (state === 'grill2' || state === 'served' || state === 'done') top = 'cooked';
+        if (state === 'done') pos = S.STACK[i];
+        // Browning: the side on the grate cooks, it is shown after turning.
+        const cookA = active ? clamp((tau - E.place[i]) / Math.max(0.1, E.flip0[i] - E.place[i]), 0, 1) : 0;
+        const warm = active ? clamp((tau - E.place[i]) / 8, 0, 1) : 0;
+        const color = top === 'cooked' ? mix('#C2403A', '#6E3420', 0.35 + 0.65 * cookA) : mix('#C2403A', '#A84A3E', warm * 0.5);
+        el(`st${i}-b`).setAttribute('fill', color);
+        el(`st${i}-m`).setAttribute('opacity', top === 'cooked' ? (0.85 * cookA).toFixed(2) : '0');
+        el(`st${i}-fat`).setAttribute('stroke', top === 'cooked' ? '#E8B07A' : '#F3D3C4');
+        el(`st${i}-edge`).setAttribute('fill', mix('#8E2E28', '#5A2A18', warm));
+        el(`st${i}`).setAttribute('transform', `translate(${pt(pos)}) rotate(${rot.toFixed(1)}) scale(1 ${(0.55 * Math.max(0.12, Math.abs(flip))).toFixed(3)})`);
+        el(`st${i}-f`).setAttribute('transform', flip < 0 ? 'scale(1 -1)' : '');
+        flare += since(E.place[i]) + since(E.flip1[i]) * 0.8;
+      }
+
+      // ----- fire, smoke and sparks -----
+      const open = this.lidOpen;
+      const heat = active ? 1 : 0;
+      el('coals').setAttribute('opacity', (heat * (0.55 + 0.15 * Math.sin(t * 3.1) + 0.2 * open)).toFixed(2));
+      for (let i = 0; i < 9; i += 1) {
+        el(`em${i}`).setAttribute('opacity', (heat * (0.35 + 0.65 * Math.abs(Math.sin(t * (1.3 + i * 0.37) + i)))).toFixed(2));
+      }
+      for (let i = 0; i < 8; i += 1) {
+        const x = 11 + i * 4.3;
+        const lick = 0.45 + 0.55 * Math.abs(Math.sin(t * (6.3 + i * 0.9) + i * 2.1));
+        const h = heat * open * (0.35 + 0.25 * lick + flare * 0.9 * (0.6 + 0.4 * Math.sin(i * 1.7 + t * 9)));
+        const sway = Math.sin(t * 4 + i) * 6 - clamp(c.look.wind, 0, 50) * 0.3;
+        el(`fl${i}`).setAttribute('transform', `translate(${x.toFixed(1)} -46.5) rotate(${sway.toFixed(1)}) scale(${(0.7 + 0.3 * lick).toFixed(2)} ${h.toFixed(2)})`);
+      }
+      if (!this.smoke) {
+        this.smoke = Array.from({ length: 14 }, (_, i) => ({ el: el(`sm${i}`), age: 1, x: 0, y: 0, r: 3 }));
+        this.sparks = Array.from({ length: 8 }, (_, i) => ({ el: el(`sp${i}`), age: 1, x: 0, y: 0, vx: 0, vy: 0 }));
+        this.smokeT = 0;
+      }
+      // Smoke: a little from the coals, more with meat on the grate, a
+      // thick puff on every sizzle; through the vent when the lid is on.
+      const rate = heat * (open * (0.6 + onGrill * 0.9 + flare * 4) + (1 - open) * 0.5);
+      this.smokeT -= c.dt * rate;
+      if (this.smokeT <= 0 && rate > 0) {
+        const p = this.smoke.find((q) => q.age >= 1);
+        if (p) {
+          p.age = 0;
+          p.x = open > 0.5 ? rnd(12, 40) : 36;
+          p.y = open > 0.5 ? -52 : -62;
+          p.r = rnd(2.2, 3.6);
+          p.dark = onGrill > 0 ? 1 : 0;
+        }
+        this.smokeT = 0.35;
+      }
+      const wind = clamp(c.look.wind, 0, 60);
+      this.smoke.forEach((p) => {
+        if (p.age >= 1) { p.el.style.opacity = '0'; return; }
+        p.age += c.dt / 3;
+        const a = p.age;
+        p.x += (-(4 + wind * 0.9) * a + Math.sin(a * 7 + p.r) * 4) * c.dt;
+        p.y -= (16 - wind * 0.18) * c.dt;
+        p.el.setAttribute('cx', p.x.toFixed(1));
+        p.el.setAttribute('cy', p.y.toFixed(1));
+        p.el.setAttribute('r', (p.r + a * 8).toFixed(1));
+        p.el.style.opacity = ((0.24 + p.dark * 0.08) * Math.sin(Math.min(1, a * 1.3) * Math.PI) * (1 - a * 0.4)).toFixed(2);
+      });
+      // Fat drips into the fire and throws sparks while meat sizzles.
+      this.sparks.forEach((s) => {
+        if (s.age >= 1) {
+          if (open > 0.5 && (onGrill > 0 || flare > 0.2) && Math.random() < c.dt * (1.2 + flare * 8)) {
+            s.age = 0; s.x = rnd(12, 40); s.y = -50; s.vx = rnd(-12, 12); s.vy = rnd(-45, -20);
+          } else { s.el.style.opacity = '0'; return; }
+        }
+        s.age += c.dt / 0.7;
+        s.vy += 60 * c.dt;
+        s.x += s.vx * c.dt;
+        s.y += s.vy * c.dt;
+        s.el.setAttribute('cx', s.x.toFixed(1));
+        s.el.setAttribute('cy', s.y.toFixed(1));
+        s.el.style.opacity = (1 - s.age).toFixed(2);
+      });
     },
   },
 };
@@ -1168,7 +1648,7 @@ class WeatherScene {
     const flakes = Array.from({ length: SC.RAIN_POOL }, (_, i) => `<circle class="flake" id="s${i}" r="2"/>`).join('');
     const splashes = Array.from({ length: SC.SPLASH_POOL }, (_, i) => `<ellipse class="splash" id="p${i}" rx="0" ry="0"/>`).join('');
     const streaks = Array.from({ length: SC.STREAKS }, (_, i) => `<path class="streak" id="w${i}" d="M0 0 q22 -5 44 0 t44 0"/>`).join('');
-    const puffs = Array.from({ length: 5 }, (_, i) => `<circle class="puff" id="b${i}" r="3"/>`).join('');
+    const puffs = Array.from({ length: 9 }, (_, i) => `<circle class="puff" id="b${i}" r="3"/>`).join('');
     const caps = Array.from({ length: 12 }, (_, i) => `<path class="cap" id="cp${i}" d="M-5 0 q5 -3.5 10 0"/>`).join('');
 
     const land = water ? `
@@ -1244,7 +1724,6 @@ class WeatherScene {
       <g id="puffs">${puffs}</g>
       <g id="fx">
         ${Array.from({ length: 6 }, (_, i) => `<path class="sweat" id="sw${i}" d="M0 -3.2 Q2.2 0 0 2.2 Q-2.2 0 0 -3.2 Z"/>`).join('')}
-        <path class="shiver" id="shv" d="M-17 -6 q-3.5 6 0 12 M-22 -9 q-4.5 9 0 18 M17 -6 q3.5 6 0 12 M22 -9 q4.5 9 0 18"/>
         ${Array.from({ length: 7 }, (_, i) => `<path class="leaf" id="lf${i}" d="M-4 0 Q0 -4 4 0 Q0 4 -4 0 Z" fill="${['#7A9A3A', '#C9A227', '#A0632B'][i % 3]}"/>`).join('')}
       </g>
 
@@ -1267,7 +1746,7 @@ class WeatherScene {
     }
     for (let i = 0; i < SC.SPLASH_POOL; i += 1) this.splashes.push({ el: byId(`p${i}`), age: 1 });
     for (let i = 0; i < SC.STREAKS; i += 1) this.streaks.push({ el: byId(`w${i}`), x: rnd(0, 800), y: rnd(30, 200), s: rnd(0.7, 1.3) });
-    for (let i = 0; i < 5; i += 1) this.puffs.push({ el: byId(`b${i}`), age: i / 5 });
+    for (let i = 0; i < 9; i += 1) this.puffs.push({ el: byId(`b${i}`), age: 1, x: 0, y: 0, vx: 0, vy: 0 });
     this.sweat = Array.from({ length: 6 }, (_, i) => ({ el: byId(`sw${i}`), age: 1, x: 0, y: 0, vx: 0, vy: 0 }));
     this.haze = Array.from({ length: 6 }, (_, i) => ({ el: byId(`hz${i}`), age: i / 6, x: 60 + i * 95 }));
     this.leaves = Array.from({ length: 7 }, (_, i) => ({ el: byId(`lf${i}`), x: rnd(0, 900), y: rnd(60, 230), r: rnd(0, 360), s: rnd(0.8, 1.4) }));
@@ -1458,23 +1937,42 @@ class WeatherScene {
       s.el.style.opacity = (gust * 0.5).toFixed(2);
     });
 
-    // Breath clouds when it is cold.
+    // Breath: when it is cold every exhale leaves a small cloud that
+    // leaves the mouth, slows down, rises, grows and fades.
+    const coldness = Math.max(L.cold, this.mood.cold || 0);
     const a = this.figure.anchor;
     const fs = this.figure.scale || 1;
-    const m = this.figure.head ? [this.figure.head[0] + 10, this.figure.head[1] + 2] : this.figure.mouth;
+    const head = this.figure.head;
+    const mouth = head ? [head[0] + 8.5, head[1] + 2.5] : this.figure.mouth;
+    const breath = (t % 3.2) / 3.2;
+    this.breathT = (this.breathT || 0) - dt;
+    if (coldness > 0.05 && breath < 0.3 && this.breathT <= 0) {
+      const p = this.puffs.find((q) => q.age >= 1);
+      if (p) {
+        p.age = 0;
+        p.x = a[0] + mouth[0] * fs;
+        p.y = a[1] + mouth[1] * fs;
+        p.vx = 24 * fs;
+        p.vy = -2;
+      }
+      this.breathT = 0.12;
+    }
     this.puffs.forEach((p) => {
-      p.age += dt / 1.6;
-      if (p.age >= 1) p.age -= 1;
+      if (p.age >= 1) { p.el.style.opacity = '0'; return; }
+      p.age += dt / 1.9;
+      p.vx *= Math.exp(-dt * 2.4);
+      p.x += (p.vx - wind * 0.3 - vw * 0.6) * dt;
+      p.y += (p.vy - 4) * dt;
       const k = p.age;
-      const drift = k * (16 - Math.min(wind, 30) * 0.35) - k * k * vw * 0.25;
-      p.el.setAttribute('cx', (a[0] + m[0] * fs + drift).toFixed(1));
-      p.el.setAttribute('cy', (a[1] + m[1] * fs - k * 12).toFixed(1));
-      p.el.setAttribute('r', (1.5 + k * 5.5).toFixed(1));
-      p.el.style.opacity = (Math.max(L.cold, this.mood.cold || 0) * 0.6 * Math.sin(k * Math.PI)).toFixed(2);
+      p.el.setAttribute('cx', p.x.toFixed(1));
+      p.el.setAttribute('cy', p.y.toFixed(1));
+      p.el.setAttribute('r', ((1.2 + k * 5.5) * fs * 0.8).toFixed(1));
+      const fade = k < 0.12 ? k / 0.12 : (1 - k) / 0.88;
+      p.el.style.opacity = (coldness * 0.5 * fade).toFixed(2);
     });
   }
 
-  /** Shivering, sweat, heat haze and flying leaves, driven by the mood. */
+  /** Sweat, heat haze and flying leaves, driven by the mood. */
   _moodFx(dt) {
     const $ = this.$;
     const mood = this.mood;
@@ -1485,31 +1983,28 @@ class WeatherScene {
     const hx = a[0] + head[0] * fs;
     const hy = a[1] + head[1] * fs;
 
-    // Cold: the whole figure trembles, with little shiver marks.
-    const cold = mood.cold || 0;
-    const jitter = cold * Math.sin(t * 55) * (cold >= 1 ? 0.9 : 0.4);
-    $('fig').setAttribute('transform', `translate(${(a[0] + jitter).toFixed(2)} ${a[1]}) scale(${fs})`);
-    $('shv').setAttribute('transform', `translate(${hx.toFixed(1)} ${(hy + 24 * fs).toFixed(1)})`);
-    $('shv').style.opacity = cold >= 1 ? (0.35 + 0.35 * Math.abs(Math.sin(t * 14))).toFixed(2) : '0';
-
-    // Hot: sweat drops fly off the head, the air shimmers above the ground.
+    // Hot: now and then a drop of sweat runs down the face and drips off.
     const hot = mood.hot || 0;
+    this.sweatT = (this.sweatT ?? 0.6) - dt;
+    if (hot > 0 && this.sweatT <= 0) {
+      const d = this.sweat.find((q) => q.age >= 1);
+      if (d) { d.age = 0; d.ox = rnd(-3.5, 1.5); d.slide = 0; d.vy = 0; }
+      this.sweatT = (hot >= 1 ? 1.1 : 2.8) * rnd(0.7, 1.3);
+    }
     this.sweat.forEach((d) => {
-      if (d.age >= 1) {
-        if (hot > 0 && Math.random() < dt * 6 * hot) {
-          d.age = 0;
-          d.x = hx + rnd(-6, 2) * fs;
-          d.y = hy - rnd(2, 6) * fs;
-          d.vx = rnd(-30, -8);
-          d.vy = rnd(-40, -10);
-        } else { d.el.style.opacity = '0'; return; }
+      if (d.age >= 1) { d.el.style.opacity = '0'; return; }
+      d.age += dt / 1.6;
+      if (d.age < 0.55) {
+        d.slide += 7 * dt;
+        d.x = hx + d.ox * fs;
+        d.y = hy + (-3 + d.slide) * fs;
+      } else {
+        d.vy += 320 * dt;
+        d.y += d.vy * dt;
       }
-      d.age += dt / 0.8;
-      d.vy += 260 * dt;
-      d.x += d.vx * dt;
-      d.y += d.vy * dt;
-      d.el.setAttribute('transform', `translate(${d.x.toFixed(1)} ${d.y.toFixed(1)}) scale(${(fs * 0.9).toFixed(2)})`);
-      d.el.style.opacity = (0.9 * (1 - d.age)).toFixed(2);
+      const fade = d.age < 0.55 ? Math.min(1, d.age / 0.1) : 1 - (d.age - 0.55) / 0.45;
+      d.el.setAttribute('transform', `translate(${d.x.toFixed(1)} ${d.y.toFixed(1)}) scale(${(fs * 0.7).toFixed(2)})`);
+      d.el.style.opacity = (0.85 * fade).toFixed(2);
     });
     this.haze.forEach((h) => {
       h.age += dt / 2.2;
@@ -1836,15 +2331,15 @@ class LutarymWeatherGoCard extends HTMLElement {
       .flake { fill: #F2F6FB; opacity: 0.9; }
       .splash { fill: none; stroke: #9CC3F0; stroke-width: 1; }
       .streak { fill: none; stroke: #DDE4EE; stroke-width: 1.6; stroke-linecap: round; }
-      .puff { fill: #E8F2FF; }
+      .puff { fill: #E8F2FF; opacity: 0; }
       .foam { fill: #E8F2FF; opacity: 0; }
       .smoke { fill: #CBD5E1; opacity: 0; }
-      .flame { fill: #FFB020; }
+      .flame { fill: #FFB020; opacity: 0.92; }
+      .spark { fill: #FFC44D; opacity: 0; }
       .flame:nth-child(even) { fill: #FF7A1A; }
       .cap { fill: none; stroke: #F2F6FB; stroke-width: 1.6; stroke-linecap: round; opacity: 0; }
       .crest { fill: none; stroke: #BFD8F0; stroke-width: 1.4; }
       .sweat { fill: #9CC3F0; opacity: 0; }
-      .shiver { fill: none; stroke: #BFE3FF; stroke-width: 1.6; stroke-linecap: round; opacity: 0; }
       .haze { fill: none; stroke: #FFE0B0; stroke-width: 2; stroke-linecap: round; opacity: 0; }
       .leaf { opacity: 0; }
 
