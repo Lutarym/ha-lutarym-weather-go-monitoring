@@ -992,6 +992,7 @@ const FIGURES = {
   bike: {
     env: 'road',
     anchor: [250, 211],
+    focus: 265,
     scale: 1.3,
     speed: 150,
     mouth: [37, -70],
@@ -1622,6 +1623,7 @@ const FIGURES = {
   running: {
     env: 'path',
     anchor: [255, 240],
+    focus: 262,
     scale: 1.35,
     speed: 105,
     mouth: [14, -78],
@@ -1650,6 +1652,7 @@ const FIGURES = {
   walking: {
     env: 'path',
     anchor: [255, 240],
+    focus: 262,
     scale: 1.35,
     speed: 65,
     mouth: [11, -79],
@@ -1690,6 +1693,7 @@ const FIGURES = {
   boating: {
     env: 'water',
     anchor: [270, 224],
+    focus: 282,
     scale: 1.55,
     speed: 130,
     mouth: [-6, -26],
@@ -1743,6 +1747,7 @@ const FIGURES = {
   sailing: {
     env: 'water',
     anchor: [285, 228],
+    focus: 282,
     scale: 1.25,
     speed: 75,
     mouth: [-12, -18],
@@ -1793,19 +1798,20 @@ const FIGURES = {
   football: {
     env: 'pitch',
     anchor: [175, 242],
+    focus: 300,
     scale: 1.35,
     speed: 1,
     mouth: [14, -79],
     shadow: [2, 22],
     build() {
       const net = [];
-      for (let i = 0; i <= 6; i += 1) net.push(`M${236 + i * 8} ${-66 + i * 1.5} V0`);
-      for (let j = 1; j <= 7; j += 1) net.push(`M236 ${-66 + j * 9.4} L284 ${-57 + j * 8.1}`);
+      for (let i = 0; i <= 6; i += 1) net.push(`M${156 + i * 8} ${-66 + i * 1.5} V0`);
+      for (let j = 1; j <= 7; j += 1) net.push(`M156 ${-66 + j * 9.4} L204 ${-57 + j * 8.1}`);
       return `
         <g id="goal">
           <g id="net"><path d="${net.join(' ')}" stroke="#C3D0E0" stroke-width="0.8" opacity="0.55" fill="none"/></g>
-          <path d="M236 0 V-66 L284 -57 V0" stroke="#E8EDF4" stroke-width="3.2" fill="none" stroke-linejoin="round"/>
-          <path d="M284 -57 L284 0" stroke="#A9B8C9" stroke-width="2"/>
+          <path d="M156 0 V-66 L204 -57 V0" stroke="#E8EDF4" stroke-width="3.2" fill="none" stroke-linejoin="round"/>
+          <path d="M204 -57 L204 0" stroke="#A9B8C9" stroke-width="2"/>
         </g>
         ${personSvg('k-', {
     shirt: '#FF5F52', shirtFar: '#B8433A', pants: '#E8EDF4', pantsFar: '#A9B8C9', shoes: '#0B1017',
@@ -1844,7 +1850,7 @@ const FIGURES = {
 
       // Ball: rests at the foot, flies on an arc after the kick, drifts with the wind.
       const start = [14, -6.5];
-      const target = [262, -36];
+      const target = [182, -36];
       let b = start;
       let spin = 0;
       let opacity = 1;
@@ -1884,6 +1890,7 @@ const FIGURES = {
   bbq: {
     env: 'garden',
     anchor: [292, 236],
+    focus: 270,
     scale: 1.3,
     speed: 1,
     mouth: [-6, -78],
@@ -2411,7 +2418,7 @@ class WeatherScene {
       </defs>
 
       <rect width="${SC.W}" height="${SC.H}" fill="url(#sky)"/>
-      <g id="sun" transform="translate(500 62)">
+      <g id="sun" transform="translate(372 58)">
         <circle id="sun-glow" r="70" fill="url(#sunglow)"/>
         <g id="sun-rays" stroke="#FFC44D" stroke-width="3" stroke-linecap="round">
           ${Array.from({ length: 12 }, (_, i) => {
@@ -2950,6 +2957,10 @@ class LutarymWeatherGoCard extends HTMLElement {
 
   connectedCallback() {
     this._build();
+    if (this._built && !this._ro && window.ResizeObserver) {
+      this._ro = new ResizeObserver(() => this._fit());
+      this._ro.observe(this._el('scene-svg').parentElement);
+    }
     if (!this._timer) this._timer = setInterval(() => this._fetch(), REFRESH_MS);
     if (this._config && this._config.demo) this._setupDemo();
     else if (this._config && !this._abort) this._fetch();
@@ -2973,6 +2984,8 @@ class LutarymWeatherGoCard extends HTMLElement {
     this._abort = null;
     if (this._observer) this._observer.disconnect();
     this._observer = null;
+    if (this._ro) this._ro.disconnect();
+    this._ro = null;
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
   }
@@ -3013,13 +3026,9 @@ class LutarymWeatherGoCard extends HTMLElement {
     this._scene = new WeatherScene(this.shadowRoot, this._config.activity);
 
     const tile = (id) => `
-      <div class="tile" id="tile-${id}">
-        <div class="tile-head">
-          <svg viewBox="-12 -12 24 24" class="tile-icon"><g>${TILE_ICON[id]}</g></svg>
-          <span id="lbl-${id}"></span>
-        </div>
-        <div class="tile-val"><span class="pre" id="pre-${id}"></span><b id="num-${id}">–</b><span class="unit" id="unit-${id}"></span></div>
-        <div class="tile-sub" id="sub-${id}"></div>
+      <div class="val" id="tile-${id}">
+        <svg viewBox="-12 -12 24 24" class="val-icon"><g>${TILE_ICON[id]}</g></svg>
+        <span class="pre" id="pre-${id}"></span><b id="num-${id}">–</b><span class="unit" id="unit-${id}"></span><span class="sub" id="sub-${id}"></span>
       </div>`;
 
     this.shadowRoot.innerHTML = `
@@ -3027,25 +3036,54 @@ class LutarymWeatherGoCard extends HTMLElement {
       <ha-card>
         <div class="lwg">
           <div class="stage">
-            <svg class="scene" viewBox="0 0 ${SC.W} ${SC.H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <svg class="scene" id="scene-svg" viewBox="0 0 ${SC.W} ${SC.H}" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
               ${this._scene.svg()}
             </svg>
             <div class="badge" id="badge">
               <span class="q" id="q"></span>
               <span class="verdict" id="verdict"></span>
+              <span class="when" id="when"></span>
             </div>
-            <div class="when" id="when"></div>
+            <div class="src" id="src"></div>
+            <div class="vals">${tile('rain')}${tile('wind')}${tile('temp')}</div>
             <div class="demo-bar" id="demo-bar" hidden></div>
           </div>
-          <div class="tiles">${tile('rain')}${tile('wind')}${tile('temp')}</div>
-          <div class="src"><span class="src-when" id="src-when"></span><span id="src"></span></div>
         </div>
       </ha-card>`;
 
     this._el = (id) => this.shadowRoot.getElementById(id);
     this._scene.attach(this._el);
+    // The scene keeps its size; a narrow card shows a cut-out around the figure.
+    if (this._ro) this._ro.disconnect();
+    if (window.ResizeObserver) {
+      this._ro = new ResizeObserver(() => this._fit());
+      this._ro.observe(this._el('scene-svg').parentElement);
+    }
+    this._fit();
     this._refresh();
     this._startLoop();
+  }
+
+  /**
+   * Same scale as the full scene at the stage height. If the card is
+   * narrower, the sides are cut off around the figure's focus point; if it
+   * is wider, the sky is trimmed instead.
+   */
+  _fit() {
+    const svg = this._el && this._el('scene-svg');
+    if (!svg) return;
+    const box = svg.parentElement.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const fig = FIGURES[this._config.activity] || FIGURES.bike;
+    const vw = box.width / (box.height / SC.H);
+    if (vw <= SC.W) {
+      const focus = fig.focus ?? fig.anchor[0];
+      const x0 = clamp(focus - vw / 2, 0, SC.W - vw);
+      svg.setAttribute('viewBox', `${x0.toFixed(1)} 0 ${vw.toFixed(1)} ${SC.H}`);
+    } else {
+      const vh = SC.W * (box.height / box.width);
+      svg.setAttribute('viewBox', `0 ${(SC.H - vh).toFixed(1)} ${SC.W} ${vh.toFixed(1)}`);
+    }
   }
 
   /** Writes everything that depends on config, language and data. */
@@ -3060,9 +3098,6 @@ class LutarymWeatherGoCard extends HTMLElement {
     const fmt1 = (v) => (isNum(v) ? nf1.format(v) : '–');
 
     $('q').textContent = c.title || info.question;
-    $('lbl-rain').textContent = t(hass, 'rainLabel');
-    $('lbl-wind').textContent = t(hass, 'windLabel');
-    $('lbl-temp').textContent = t(hass, 'tempLabel');
     $('src').textContent = c.demo ? t(hass, 'demoNote') : t(hass, 'source');
 
     const target = targetDate();
@@ -3073,7 +3108,6 @@ class LutarymWeatherGoCard extends HTMLElement {
       const d = list[(this._demoIdx || 0) % list.length];
       hours = demoHours(d);
       $('when').textContent = `${t(hass, 'demo')} · ${t(hass, `demo_${d.key}`)}`;
-      $('src-when').textContent = `${$('when').textContent} · `;
       // Progress bar until the next change.
       const bar = $('demo-bar');
       bar.style.transition = 'none';
@@ -3084,8 +3118,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       bar.style.width = '100%';
     } else {
       $('demo-bar').hidden = true;
-      $('when').textContent = `${isTomorrow ? t(hass, 'tomorrow') : t(hass, 'today')} · 06:00–18:00`;
-      $('src-when').textContent = `${$('when').textContent} · `;
+      $('when').textContent = `${isTomorrow ? t(hass, 'tomorrow') : t(hass, 'today')} · 06–18 h`;
       hours = this._state === 'ready' ? dayHours(this._hourly, target) : null;
     }
     const res = hours ? evaluate(hours, c) : null;
@@ -3093,7 +3126,7 @@ class LutarymWeatherGoCard extends HTMLElement {
     if (!res) {
       $('verdict').textContent = this._state === 'loading' ? t(hass, 'loading') : t(hass, 'noData');
       $('badge').style.setProperty('--accent', COLOR.neutral);
-      ['rain', 'wind', 'temp'].forEach((id) => this._tile(id, null, '', '–', '', ''));
+      ['rain', 'wind', 'temp'].forEach((id) => this._tile(id, null, '', '–', '', '', ''));
       this._scene.setLook(weatherLook(null), 0, {});
       return;
     }
@@ -3103,25 +3136,29 @@ class LutarymWeatherGoCard extends HTMLElement {
     $('verdict').textContent = labels[overall];
     $('badge').style.setProperty('--accent', COLOR[OVERALL_RATING[overall]]);
 
-    this._tile('rain', rating.rain, t(hass, 'pre_max'), isNum(m.rainProb) ? nf0.format(m.rainProb) : '–', '%',
-      `${t(hass, 'pre_max')} ${fmt1(m.rainAmount)} mm`);
+    this._tile('rain', rating.rain, '', isNum(m.rainProb) ? nf0.format(m.rainProb) : '–', '%',
+      `${fmt1(m.rainAmount)} mm`,
+      `${t(hass, 'rainLabel')}: ${t(hass, 'pre_max')} ${isNum(m.rainProb) ? nf0.format(m.rainProb) : '–'} %, ${t(hass, 'pre_max')} ${fmt1(m.rainAmount)} mm`);
     if (c.wind_mode === 'range') {
-      this._tile('wind', rating.wind, t(hass, 'pre_avg'), fmt1(m.windAvg), 'km/h',
-        `${t(hass, 'ideal')} ${nf0.format(c.wind_ideal_min)}–${nf0.format(c.wind_ideal_max)} km/h`);
+      this._tile('wind', rating.wind, t(hass, 'pre_avg'), nf0.format(m.windAvg), 'km/h',
+        `${t(hass, 'ideal')} ${nf0.format(c.wind_ideal_min)}–${nf0.format(c.wind_ideal_max)}`,
+        `${t(hass, 'windLabel')}: ${t(hass, 'pre_avg')} ${fmt1(m.windAvg)} km/h, ${t(hass, 'ideal')} ${nf0.format(c.wind_ideal_min)}–${nf0.format(c.wind_ideal_max)} km/h`);
     } else {
-      this._tile('wind', rating.wind, t(hass, 'pre_max'), fmt1(m.windMax), 'km/h',
-        `${t(hass, 'pre_min')} ${fmt1(m.windMin)} km/h`);
+      this._tile('wind', rating.wind, '', nf0.format(m.windMax), 'km/h',
+        `${t(hass, 'pre_min')} ${nf0.format(m.windMin)}`,
+        `${t(hass, 'windLabel')}: ${t(hass, 'pre_max')} ${fmt1(m.windMax)} km/h, ${t(hass, 'pre_min')} ${fmt1(m.windMin)} km/h`);
     }
-    this._tile('temp', rating.temp, t(hass, 'pre_min'), fmt1(m.tempMin), '°C',
-      `${t(hass, 'pre_max')} ${fmt1(m.tempMax)} °C`);
+    this._tile('temp', rating.temp, '', `${nf0.format(m.tempMin)}–${nf0.format(m.tempMax)}`, '°C', '',
+      `${t(hass, 'tempLabel')}: ${t(hass, 'pre_min')} ${fmt1(m.tempMin)} °C, ${t(hass, 'pre_max')} ${fmt1(m.tempMax)} °C`);
 
     this._scene.lang = lutarymLang(hass);
     this._scene.setLook(weatherLook(m), PACE[overall], moodOf(res, c));
     if (prefersReducedMotion()) this._scene.still();
   }
 
-  _tile(id, rating, pre, num, unit, sub) {
+  _tile(id, rating, pre, num, unit, sub, title) {
     const $ = this._el;
+    $(`tile-${id}`).title = title || '';
     $(`tile-${id}`).style.setProperty('--accent', rating ? COLOR[rating] : COLOR.neutral);
     $(`pre-${id}`).textContent = pre ? `${pre} ` : '';
     $(`num-${id}`).textContent = num;
@@ -3153,15 +3190,11 @@ class LutarymWeatherGoCard extends HTMLElement {
       ha-card { overflow: hidden; }
       .lwg {
         container-type: inline-size;
-        background: linear-gradient(180deg, #131A24 0%, #0D131B 100%);
-        color: #E8EDF4; padding: 10px;
-        border-radius: var(--ha-card-border-radius, 12px);
+        background: #0D131B; color: #E8EDF4;
+        border-radius: var(--ha-card-border-radius, 12px); overflow: hidden;
         font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
       }
-      .stage {
-        position: relative; border-radius: 10px; overflow: hidden;
-        border: 1px solid #26303F; aspect-ratio: ${SC.W} / ${SC.H};
-      }
+      .stage { position: relative; overflow: hidden; height: 230px; }
       .scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
       .drop { stroke: #9CC3F0; stroke-width: 1.4; stroke-linecap: round; opacity: 0.75; }
       .flake { fill: #F2F6FB; opacity: 0.9; }
@@ -3183,89 +3216,63 @@ class LutarymWeatherGoCard extends HTMLElement {
 
       .badge {
         --accent: ${COLOR.neutral};
-        position: absolute; left: 10px; top: 10px;
-        display: flex; flex-direction: column; gap: 1px;
-        padding: 7px 14px 8px; border-radius: 12px;
+        position: absolute; left: 8px; top: 8px; max-width: calc(100% - 16px);
+        display: flex; flex-direction: column; gap: 0;
+        padding: 5px 11px 6px; border-radius: 11px;
         background: rgba(11, 16, 23, 0.72);
         border: 1.5px solid var(--accent);
-        box-shadow: 0 0 18px -4px var(--accent);
+        box-shadow: 0 0 16px -4px var(--accent);
         backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
         transition: border-color 700ms ease, box-shadow 700ms ease;
       }
       .q {
-        font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
+        font-size: 9.5px; font-weight: 600; letter-spacing: 0.07em;
         text-transform: uppercase; color: #C4CEDB;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
       .verdict {
-        font-size: 19px; font-weight: 700; color: var(--accent);
-        transition: color 700ms ease;
+        font-size: 16px; font-weight: 700; color: var(--accent); line-height: 1.25;
+        white-space: nowrap; transition: color 700ms ease;
+      }
+      .when { font-size: 9.5px; font-weight: 600; color: #9AA6B6; letter-spacing: 0.02em; white-space: nowrap; }
+      .src {
+        position: absolute; right: 8px; top: 6px;
+        font-size: 8px; color: rgba(232, 237, 244, 0.6); letter-spacing: 0.02em;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); pointer-events: none;
       }
       .demo-bar {
-        position: absolute; left: 0; bottom: 0; height: 3px; width: 0;
-        background: #3D8BFF; opacity: 0.85;
+        position: absolute; left: 0; bottom: 0; height: 2px; width: 0;
+        background: #3D8BFF; opacity: 0.9;
       }
       .demo-bar[hidden] { display: none; }
-      .when {
-        position: absolute; right: 10px; top: 10px;
-        padding: 4px 10px; border-radius: 10px;
-        background: rgba(11, 16, 23, 0.6); color: #C4CEDB;
-        font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
-      }
 
-      .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
-      .tile {
+      /* Values as a strip at the bottom of the scene, below the figure. */
+      .vals {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        display: flex; justify-content: space-evenly; align-items: center; gap: 6px;
+        padding: 14px 8px 4px;
+        background: linear-gradient(180deg, rgba(8, 12, 18, 0) 0%, rgba(8, 12, 18, 0.82) 55%);
+        pointer-events: auto;
+      }
+      .val {
         --accent: ${COLOR.neutral};
-        position: relative; overflow: hidden;
-        background: #0F151D; border: 1px solid #26303F; border-radius: 10px;
-        padding: 8px 10px 9px;
+        display: flex; align-items: baseline; gap: 3px; white-space: nowrap;
+        font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
       }
-      .tile::before {
-        content: ''; position: absolute; left: 0; right: 0; top: 0; height: 3px;
-        background: var(--accent); transition: background 700ms ease;
+      .val-icon {
+        width: 13px; height: 13px; flex: none; align-self: center; margin-right: 1px;
+        fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+        transition: stroke 700ms ease;
       }
-      .tile-head {
-        display: flex; align-items: center; gap: 6px;
-        font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
-        color: var(--accent); transition: color 700ms ease;
-      }
-      .tile-icon {
-        width: 16px; height: 16px; flex: none;
-        fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-      }
-      .tile-val { margin-top: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .tile-val b { font-size: 19px; font-weight: 700; color: #FFFFFF; }
-      .tile-val .pre, .tile-val .unit { font-size: 11.5px; font-weight: 600; color: #9AA6B6; }
-      .tile-sub { margin-top: 1px; font-size: 11.5px; color: #9AA6B6; font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .src { margin-top: 8px; text-align: right; font-size: 10.5px; color: #6B7A90; }
+      .val b { font-size: 12.5px; font-weight: 700; color: #FFFFFF; }
+      .val .pre, .val .unit { font-size: 9.5px; font-weight: 600; color: #C4CEDB; }
+      .val .sub { font-size: 9.5px; color: #9AA6B6; margin-left: 3px; }
+      .val .sub:empty { display: none; }
 
-      .src-when { display: none; }
-
-      /* Narrow card (half width on a dashboard): smaller badge, the day
-         moves to the footer, the three values become compact rows. */
+      /* Narrow card: keep the main values only. */
       @container (max-width: 400px) {
-        .stage { border-radius: 8px; }
-        .badge { left: 6px; top: 6px; padding: 3px 8px 4px; border-radius: 9px; border-width: 1.2px; }
-        .q { font-size: 8.5px; letter-spacing: 0.05em; }
-        .verdict { font-size: 13.5px; }
-        .when, .demo-bar { display: none; }
-        .src-when { display: inline; }
-        .tiles { grid-template-columns: 1fr; gap: 3px; margin-top: 6px; }
-        .tile {
-          display: flex; align-items: baseline; gap: 6px;
-          padding: 3px 8px 3px 10px; border-radius: 7px;
-        }
-        .tile::before { left: 0; top: 0; bottom: 0; right: auto; width: 3px; height: auto; }
-        .tile-head { flex: 1 1 auto; min-width: 0; font-size: 9.5px; letter-spacing: 0.05em; gap: 4px; align-self: center; }
-        .tile-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tile-icon { width: 12px; height: 12px; }
-        .tile-val { margin-top: 0; }
-        .tile-val b { font-size: 13px; }
-        .tile-val .pre, .tile-val .unit { font-size: 9.5px; }
-        .tile-sub { margin-top: 0; font-size: 9.5px; min-width: 62px; text-align: right; }
-        .src { margin-top: 5px; font-size: 9px; }
-      }
-      @container (max-width: 245px) {
-        .tile-sub { display: none; }
+        .val .sub { display: none; }
+        .src { display: none; }
       }
     `;
   }

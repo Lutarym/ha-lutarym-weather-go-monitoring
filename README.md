@@ -34,7 +34,7 @@ The cyclist also has a little comedy for each reason: in a storm his helmet blow
 
 Reactions fade in and out smoothly. The cyclist gets off the saddle and puts a foot down. For "Maybe" the effects are lighter and the figure keeps moving.
 
-Below the scene the card shows the verdict and the values for rain, wind and temperature.
+The verdict and the values for rain, wind and temperature are shown inside the scene.
 
 Forecast: [Open-Meteo](https://open-meteo.com/) DWD ICON model, no API key required.
 The animation pauses while the card is out of view and respects the system setting for reduced motion.
@@ -69,7 +69,7 @@ Optional thresholds, each overrides the activity preset:
 
 ## Size
 
-In the sections view the card takes half the width (6 of 12 columns) by default, so it informs without dominating the dashboard. It can be resized from 3 to 12 columns. When the card is narrow, the badge gets smaller, the day moves to the footer and the three values become compact rows.
+The card is the animated scene itself; verdict, day and the values for rain, wind and temperature are shown inside it. In the sections view it takes half the width (6 of 12 columns) by default and can be resized from 3 to 12 columns. The scene always keeps its size: a narrower card shows a cut-out around the figure instead of shrinking the picture. Hover a value to see all details (minimum and maximum).
 
 ## Demo mode
 
