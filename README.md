@@ -69,7 +69,7 @@ Optional thresholds, each overrides the activity preset:
 
 ## Size
 
-The card is the animated scene itself; verdict, day and the values for rain, wind and temperature are shown inside it. In the sections view it takes half the width (6 of 12 columns) by default and can be resized from 3 to 12 columns. The scene always keeps its size: a narrower card shows a cut-out around the figure instead of shrinking the picture. Hover a value to see all details (minimum and maximum).
+The card is the animated scene itself; verdict, day and the values for rain, wind and temperature are shown inside it. In the sections view it takes half the width and 4 rows by default (6 of 12 columns, 248 px high). Width (3 to 12 columns) and height (2 rows or more) can be changed in the dashboard; the scene fills the card. Its scale follows the height, and a narrower card shows a cut-out around the figure instead of shrinking the picture. Without rows (for example in the masonry view) the card is 230 px high. Hover a value to see all details (minimum and maximum).
 
 ## Demo mode
 

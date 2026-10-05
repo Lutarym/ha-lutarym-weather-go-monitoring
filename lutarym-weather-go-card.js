@@ -2946,9 +2946,12 @@ class LutarymWeatherGoCard extends HTMLElement {
 
   getCardSize() { return 4; }
 
-  /** Sections view: half the width by default, resizable from 3 to 12 columns. */
+  /**
+   * Sections view: half the width and 4 rows (248 px) by default. Width
+   * and height can be changed in the dashboard; the scene fills the cell.
+   */
   getGridOptions() {
-    return { columns: 6, min_columns: 3, max_columns: 12 };
+    return { columns: 6, rows: 4, min_columns: 3, max_columns: 12, min_rows: 2 };
   }
 
   static getConfigElement() { return document.createElement(EDITOR_TAG); }
@@ -2958,8 +2961,8 @@ class LutarymWeatherGoCard extends HTMLElement {
   connectedCallback() {
     this._build();
     if (this._built && !this._ro && window.ResizeObserver) {
-      this._ro = new ResizeObserver(() => this._fit());
-      this._ro.observe(this._el('scene-svg').parentElement);
+      this._ro = new ResizeObserver(() => requestAnimationFrame(() => this._fit()));
+      this._ro.observe(this);
     }
     if (!this._timer) this._timer = setInterval(() => this._fetch(), REFRESH_MS);
     if (this._config && this._config.demo) this._setupDemo();
@@ -3056,10 +3059,11 @@ class LutarymWeatherGoCard extends HTMLElement {
     // The scene keeps its size; a narrow card shows a cut-out around the figure.
     if (this._ro) this._ro.disconnect();
     if (window.ResizeObserver) {
-      this._ro = new ResizeObserver(() => this._fit());
-      this._ro.observe(this._el('scene-svg').parentElement);
+      this._ro = new ResizeObserver(() => requestAnimationFrame(() => this._fit()));
+      this._ro.observe(this);
     }
     this._fit();
+    requestAnimationFrame(() => this._fit());
     this._refresh();
     this._startLoop();
   }
@@ -3072,7 +3076,12 @@ class LutarymWeatherGoCard extends HTMLElement {
   _fit() {
     const svg = this._el && this._el('scene-svg');
     if (!svg) return;
+    // Without a height from the dashboard (no rows) the card uses its own.
+    const root = this.shadowRoot.querySelector('.lwg');
+    root.classList.remove('free');
+    if (this.getBoundingClientRect().height <= 101) root.classList.add('free');
     const box = svg.parentElement.getBoundingClientRect();
+    root.classList.toggle('short', box.height < 175);
     if (!box.width || !box.height) return;
     const fig = FIGURES[this._config.activity] || FIGURES.bike;
     const vw = box.width / (box.height / SC.H);
@@ -3186,15 +3195,21 @@ class LutarymWeatherGoCard extends HTMLElement {
 
   _css() {
     return `
-      :host { display: block; }
-      ha-card { overflow: hidden; }
+      :host { display: block; height: 100%; }
+      ha-card { overflow: hidden; height: 100%; }
       .lwg {
-        container-type: inline-size;
+        container-type: inline-size; height: 100%;
         background: #0D131B; color: #E8EDF4;
         border-radius: var(--ha-card-border-radius, 12px); overflow: hidden;
         font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
       }
-      .stage { position: relative; overflow: hidden; height: 230px; }
+      .stage { position: relative; overflow: hidden; height: 100%; min-height: 100px; }
+      .free .stage { height: 230px; }
+      .short .when { display: none; }
+      .short .badge { padding: 3px 9px 4px; top: 6px; left: 6px; }
+      .short .q { font-size: 8.5px; }
+      .short .verdict { font-size: 13.5px; }
+      .short .vals { padding-top: 10px; }
       .scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
       .drop { stroke: #9CC3F0; stroke-width: 1.4; stroke-linecap: round; opacity: 0.75; }
       .flake { fill: #F2F6FB; opacity: 0.9; }
