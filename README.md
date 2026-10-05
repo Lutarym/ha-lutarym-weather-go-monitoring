@@ -67,6 +67,10 @@ Optional thresholds, each overrides the activity preset:
 | `wind_ideal_min` | km/h, only for sailing (wind range) |
 | `temp_ideal_min`, `temp_ideal_max`, `temp_tolerance` | °C |
 
+## Size
+
+In the sections view the card takes half the width (6 of 12 columns) by default, so it informs without dominating the dashboard. It can be resized from 3 to 12 columns. When the card is narrow, the badge gets smaller, the day moves to the footer and the three values become compact rows.
+
 ## Demo mode
 
 Switch on **Demo mode** in the visual editor (or `demo: true`) to see every scene without waiting for the weather. The card then cycles through sample weather: sunny, showers, storm, heavy rain, frost, snow and heat (plus calm for sailing). No forecast is loaded while demo mode is on. The top right shows the current sample weather and a thin bar counts down to the next change.

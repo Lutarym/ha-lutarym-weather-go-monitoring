@@ -2937,7 +2937,12 @@ class LutarymWeatherGoCard extends HTMLElement {
     else if (langChanged) this._refresh();
   }
 
-  getCardSize() { return 6; }
+  getCardSize() { return 4; }
+
+  /** Sections view: half the width by default, resizable from 3 to 12 columns. */
+  getGridOptions() {
+    return { columns: 6, min_columns: 3, max_columns: 12 };
+  }
 
   static getConfigElement() { return document.createElement(EDITOR_TAG); }
 
@@ -3033,7 +3038,7 @@ class LutarymWeatherGoCard extends HTMLElement {
             <div class="demo-bar" id="demo-bar" hidden></div>
           </div>
           <div class="tiles">${tile('rain')}${tile('wind')}${tile('temp')}</div>
-          <div class="src" id="src"></div>
+          <div class="src"><span class="src-when" id="src-when"></span><span id="src"></span></div>
         </div>
       </ha-card>`;
 
@@ -3068,6 +3073,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       const d = list[(this._demoIdx || 0) % list.length];
       hours = demoHours(d);
       $('when').textContent = `${t(hass, 'demo')} · ${t(hass, `demo_${d.key}`)}`;
+      $('src-when').textContent = `${$('when').textContent} · `;
       // Progress bar until the next change.
       const bar = $('demo-bar');
       bar.style.transition = 'none';
@@ -3079,6 +3085,7 @@ class LutarymWeatherGoCard extends HTMLElement {
     } else {
       $('demo-bar').hidden = true;
       $('when').textContent = `${isTomorrow ? t(hass, 'tomorrow') : t(hass, 'today')} · 06:00–18:00`;
+      $('src-when').textContent = `${$('when').textContent} · `;
       hours = this._state === 'ready' ? dayHours(this._hourly, target) : null;
     }
     const res = hours ? evaluate(hours, c) : null;
@@ -3145,6 +3152,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       :host { display: block; }
       ha-card { overflow: hidden; }
       .lwg {
+        container-type: inline-size;
         background: linear-gradient(180deg, #131A24 0%, #0D131B 100%);
         color: #E8EDF4; padding: 10px;
         border-radius: var(--ha-card-border-radius, 12px);
@@ -3230,9 +3238,34 @@ class LutarymWeatherGoCard extends HTMLElement {
       .tile-sub { margin-top: 1px; font-size: 11.5px; color: #9AA6B6; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .src { margin-top: 8px; text-align: right; font-size: 10.5px; color: #6B7A90; }
 
-      @media (max-width: 420px) {
-        .tile-val b { font-size: 16px; }
-        .verdict { font-size: 16px; }
+      .src-when { display: none; }
+
+      /* Narrow card (half width on a dashboard): smaller badge, the day
+         moves to the footer, the three values become compact rows. */
+      @container (max-width: 400px) {
+        .stage { border-radius: 8px; }
+        .badge { left: 6px; top: 6px; padding: 3px 8px 4px; border-radius: 9px; border-width: 1.2px; }
+        .q { font-size: 8.5px; letter-spacing: 0.05em; }
+        .verdict { font-size: 13.5px; }
+        .when, .demo-bar { display: none; }
+        .src-when { display: inline; }
+        .tiles { grid-template-columns: 1fr; gap: 3px; margin-top: 6px; }
+        .tile {
+          display: flex; align-items: baseline; gap: 6px;
+          padding: 3px 8px 3px 10px; border-radius: 7px;
+        }
+        .tile::before { left: 0; top: 0; bottom: 0; right: auto; width: 3px; height: auto; }
+        .tile-head { flex: 1 1 auto; min-width: 0; font-size: 9.5px; letter-spacing: 0.05em; gap: 4px; align-self: center; }
+        .tile-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tile-icon { width: 12px; height: 12px; }
+        .tile-val { margin-top: 0; }
+        .tile-val b { font-size: 13px; }
+        .tile-val .pre, .tile-val .unit { font-size: 9.5px; }
+        .tile-sub { margin-top: 0; font-size: 9.5px; min-width: 62px; text-align: right; }
+        .src { margin-top: 5px; font-size: 9px; }
+      }
+      @container (max-width: 245px) {
+        .tile-sub { display: none; }
       }
     `;
   }
