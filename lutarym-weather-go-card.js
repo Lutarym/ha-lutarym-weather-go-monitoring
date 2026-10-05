@@ -34,6 +34,7 @@
  *   temp_ideal_min: 15                # optional, °C
  *   temp_ideal_max: 30                # optional, °C
  *   temp_tolerance: 2                 # optional, °C
+ *   height: 220                       # optional, card height in px (100 to 800), default automatic
  *   demo: true                        # optional, sample weather that changes by itself
  *   demo_interval: 20                 # optional, seconds between weather changes in demo mode
  */
@@ -84,6 +85,9 @@ const I18N = {
     editorTempMin: 'Ideal min. temperature (°C)',
     editorTempMax: 'Ideal max. temperature (°C)',
     editorTempTolerance: 'Tolerance (°C)',
+    sectionLook: 'Display',
+    editorHeight: 'Card height (px)',
+    editorHeightHint: 'Empty = automatic (follows the dashboard, otherwise 230 px). 100 to 800.',
     sectionDemo: 'Demo',
     editorDemo: 'Demo mode (sample weather)',
     editorDemoHint: 'Shows every scene: the weather changes by itself, no real data is loaded.',
@@ -129,6 +133,9 @@ const I18N = {
     editorTempMin: 'Ideal min. Temperatur (°C)',
     editorTempMax: 'Ideal max. Temperatur (°C)',
     editorTempTolerance: 'Toleranz (°C)',
+    sectionLook: 'Darstellung',
+    editorHeight: 'Höhe der Karte (px)',
+    editorHeightHint: 'Leer = automatisch (folgt dem Dashboard, sonst 230 px). 100 bis 800.',
     sectionDemo: 'Demo',
     editorDemo: 'Demomodus (Beispielwetter)',
     editorDemoHint: 'Zeigt alle Szenen: Das Wetter wechselt von selbst, es werden keine echten Daten geladen.',
@@ -2905,6 +2912,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       temp_ideal_min: num('temp_ideal_min', p.temp_ideal_min),
       temp_ideal_max: num('temp_ideal_max', p.temp_ideal_max),
       temp_tolerance: num('temp_tolerance', p.temp_tolerance),
+      height: config.height === '' || config.height == null || !isNum(Number(config.height)) ? null : clamp(Number(config.height), 100, 800),
       demo: config.demo === true,
       demo_interval: clamp(num('demo_interval', 20), 5, 600),
     };
@@ -2917,6 +2925,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       if (demoChanged) this._setupDemo();
       if (moved && !this._config.demo) this._fetch();
       else this._refresh();
+      this._fit();
     }
   }
 
@@ -2951,7 +2960,10 @@ class LutarymWeatherGoCard extends HTMLElement {
    * and height can be changed in the dashboard; the scene fills the cell.
    */
   getGridOptions() {
-    return { columns: 6, rows: 4, min_columns: 3, max_columns: 12, min_rows: 2 };
+    const h = this._config && this._config.height;
+    // A fixed height takes as many rows (56 px + 8 px gap) as it needs.
+    const rows = h ? Math.max(2, Math.round((h + 8) / 64)) : 4;
+    return { columns: 6, rows, min_columns: 3, max_columns: 12, min_rows: 2 };
   }
 
   static getConfigElement() { return document.createElement(EDITOR_TAG); }
@@ -3076,10 +3088,15 @@ class LutarymWeatherGoCard extends HTMLElement {
   _fit() {
     const svg = this._el && this._el('scene-svg');
     if (!svg) return;
-    // Without a height from the dashboard (no rows) the card uses its own.
+    // Height set in the card's options wins. Otherwise follow the dashboard;
+    // without a height from it (no rows) the card uses its own.
     const root = this.shadowRoot.querySelector('.lwg');
+    const fixed = this._config.height;
+    root.classList.toggle('fixedh', !!fixed);
+    svg.parentElement.style.height = fixed ? `${fixed}px` : '';
+    this.style.height = fixed ? 'auto' : '';
     root.classList.remove('free');
-    if (this.getBoundingClientRect().height <= 101) root.classList.add('free');
+    if (!fixed && this.getBoundingClientRect().height <= 101) root.classList.add('free');
     const box = svg.parentElement.getBoundingClientRect();
     root.classList.toggle('short', box.height < 175);
     if (!box.width || !box.height) return;
@@ -3205,6 +3222,7 @@ class LutarymWeatherGoCard extends HTMLElement {
       }
       .stage { position: relative; overflow: hidden; height: 100%; min-height: 100px; }
       .free .stage { height: 230px; }
+      .fixedh { height: auto; }
       .short .when { display: none; }
       .short .badge { padding: 3px 9px 4px; top: 6px; left: 6px; }
       .short .q { font-size: 8.5px; }
@@ -3481,6 +3499,16 @@ class LutarymWeatherGoCardEditor extends HTMLElement {
       t(hass, 'editorTitle'), 'title', cfg.title, info.question,
       t(hass, 'editorTitleHint', { title: info.question }),
     ));
+
+    form.appendChild(this._section(t(hass, 'sectionLook')));
+    const hRow = this._numberRow(t(hass, 'editorHeight'), 'height', cfg.height, '', '10');
+    const hHint = document.createElement('div');
+    hHint.className = 'hint';
+    hHint.textContent = t(hass, 'editorHeightHint');
+    hRow.appendChild(hHint);
+    hRow.querySelector('input').min = '100';
+    hRow.querySelector('input').max = '800';
+    form.appendChild(hRow);
 
     form.appendChild(this._section(t(hass, 'sectionDemo')));
     form.appendChild(this._checkRow(t(hass, 'editorDemo'), 'demo', cfg.demo, t(hass, 'editorDemoHint')));

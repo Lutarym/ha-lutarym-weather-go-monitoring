@@ -55,6 +55,7 @@ activity: bike            # bike | running | walking | boating | sailing | footb
 lat: 52.52                # optional
 lon: 13.405               # optional
 title: My Title           # optional, replaces the activity's question
+height: 220               # optional, card height in px (100 to 800)
 ```
 
 Optional thresholds, each overrides the activity preset:
@@ -69,7 +70,13 @@ Optional thresholds, each overrides the activity preset:
 
 ## Size
 
-The card is the animated scene itself; verdict, day and the values for rain, wind and temperature are shown inside it. In the sections view it takes half the width and 4 rows by default (6 of 12 columns, 248 px high). Width (3 to 12 columns) and height (2 rows or more) can be changed in the dashboard; the scene fills the card. Its scale follows the height, and a narrower card shows a cut-out around the figure instead of shrinking the picture. Without rows (for example in the masonry view) the card is 230 px high. Hover a value to see all details (minimum and maximum).
+The card is the animated scene itself; verdict, day and the values for rain, wind and temperature are shown inside it. In the sections view it takes half the width and 4 rows by default (6 of 12 columns, 248 px high). Width (3 to 12 columns) and height (2 rows or more) can be changed in the dashboard; the scene fills the card. Its scale follows the height, and a narrower card shows a cut-out around the figure instead of shrinking the picture. Without rows (for example in the masonry view) the card is 230 px high.
+
+You can also set a fixed height in the card's visual editor under **Display**, or in YAML:
+
+```yaml
+height: 220   # px, 100 to 800; leave out for automatic
+``` Hover a value to see all details (minimum and maximum).
 
 ## Demo mode
 
